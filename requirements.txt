@@ -1,0 +1,13 @@
+google-genai>=2.32
+websockets>=16
+sounddevice>=0.5
+numpy>=2
+python-dotenv>=1
+pillow>=11
+python-xlib>=0.33
+# local Qwen brain (see scripts/install_local.sh):
+ollama>=0.6
+faster-whisper>=1.2
+kokoro-onnx>=0.4
+nvidia-cublas-cu12
+nvidia-cudnn-cu12>=9,<10
