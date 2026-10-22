@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Jarvis Hands",
+  "version": "1.0.0",
+  "description": "Lets the Jarvis voice assistant on this PC control Chrome: tabs, clicks, typing, reading pages.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtcsSzoqtgXCq0a/cYUcsxLo31TObxmwtrKI7VWPTdbTt7QZ0581qXLTTBXpoaw8OqUi4Z195Ot60yPOq2Fks+v/G7sRwJsaDtzNKPncQpZiZliy404PmjMaLIZpM+DMBz8bVpCdNfPUH2EQOqaZPR8781yh7snRJTG8hW1A47QeBZ6szbxN8PQjbqVvtMYKllkMHMGvGYFnx9njJLPiS/W5a8fZcIA50IpOft2YC+kWeQDdg6eMGE3nWW0VD1yn5HArB6wJfOCZYDMUWRgOYfEFHGyf3ZxKijt75OXh2Ov0hNzMvr/sy+ABLmfVW8uuLIaXhdFtVDzMWeLc3zFzkMQIDAQAB",
+  "permissions": ["tabs", "scripting", "activeTab", "debugger", "alarms", "windows", "webNavigation"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Jarvis Hands", "default_popup": "popup.html" },
+  "minimum_chrome_version": "116"
+}
