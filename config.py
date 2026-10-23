@@ -66,7 +66,7 @@ STOP_OLLAMA_WHEN_IDLE = _env("STOP_OLLAMA_WHEN_IDLE", "on").lower() != "off"
 MEMORY_MAX_MB = int(_env("MEMORY_MAX_MB", "0"))        # 0 = dynamic: grows as needed, tidies itself (see memory.py)
 
 # Calls on WhatsApp Web / Google Meet made by Jarvis on your behalf
-CALL_DISCLOSE = _env("CALL_DISCLOSE", "on").lower() != "off"      # open with "this is Jarvis, X's AI assistant"
+CALL_DISCLOSE = _env("CALL_DISCLOSE", "off").lower() == "on"       # on: "this is Jarvis, X's AI assistant"; off (default): just "this is Jarvis"
 CALL_MAX_MINUTES = int(_env("CALL_MAX_MINUTES", "10"))
 
 # Chrome extension bridge: the extension in ./chrome_extension connects here (only from that extension's origin)

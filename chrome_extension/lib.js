@@ -1,7 +1,7 @@
 // Page-side toolkit injected by Jarvis Hands (window.__jv). Plain DOM events, no debugger bar needed.
 // Works through open shadow roots; background.js runs it inside iframes too (J.fid = frame id).
 (() => {
-  const V = 9;
+  const V = 10;
   if (window.__jv && window.__jv.v === V) return;
   const J = (window.__jv = { v: V, n: (window.__jv && window.__jv.n) || 0, fid: (window.__jv && window.__jv.fid) || 0 });
 
@@ -517,7 +517,7 @@
     const mb = btn(/turn (on|off) microphone|^(un)?mute\b|(un)?mute microphone/i);
     const ml = mb ? low(label(mb)) : "";
     const mic = mb ? (/turn on|unmute/.test(ml) ? "off" : "on") : "?";
-    let phase = "none";
+    let phase = "none", ui = "", timer = -1;
     if (meet) {
       if (btn(/^(leave call|end call)/i)) phase = "in_call";
       else if (btn(/^(join now|ask to join|switch here|join anyway)/i)) phase = "prejoin";
@@ -526,11 +526,26 @@
       const end = btn(/^(end call|hang up|leave call|cancel call|end)\b/i);
       if (btn(/^(accept|answer)\b/i) && btn(/^(decline|reject)\b/i)) phase = "incoming";
       else if (!end && btn(/^join( call| now| group call| voice call)?$/i) && /\b(call|ongoing)\b/.test(text)) phase = "joinable";   // a group call is running
-      else if (end) phase = /\b(calling|ringing|connecting|waiting for)\b/.test(text) ? "ringing" : "in_call";
+      else if (end) {
+        // look only at the call panel around the End button (not the chat list, whose timestamps look like timers)
+        let box = end.closest("button,[role=button]") || end;
+        for (let i = 0; i < 8 && box.parentElement; i++) {
+          const up = box.parentElement;
+          if (up.querySelector("#side,#pane-side,[role=grid],[role=list]") || norm(up.innerText).length > 300) break;   // never swallow the chat list
+          box = up;
+          const pos = getComputedStyle(box).position;
+          if (pos === "fixed" || pos === "absolute" || box.matches("[role=dialog],dialog")) break;                      // reached the call panel itself
+        }
+        ui = low(box.innerText).slice(0, 120);
+        const tm = ui.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b/);
+        timer = tm ? (tm[3] ? +tm[1] * 3600 + +tm[2] * 60 + +tm[3] : +tm[1] * 60 + +tm[2]) : -1;
+        // ringing: still calling. in_call ONLY once the call timer is running. connecting: End button but no sign either way.
+        phase = /\b(calling|ringing|connecting|waiting for|trying to connect|reconnecting)\b/.test(ui) ? "ringing" : timer >= 1 ? "in_call" : "connecting";
+      }
       else if (/\b(no answer|call declined|didn't answer|call ended|unavailable)\b/.test(text.slice(0, 600))) phase = "ended";
     }
     const buttons = phase === "none" ? "" : deep("button,[role=button]").filter(vis).map(label).filter(Boolean).slice(0, 12).join(" | ");
-    return { platform: meet ? "meet" : "whatsapp", phase, mic, buttons, code: meet ? (location.pathname.match(/[a-z]{3}-[a-z]{4}-[a-z]{3}/i) || [""])[0] : "" };
+    return { platform: meet ? "meet" : "whatsapp", phase, mic, buttons, ui, timer, code: meet ? (location.pathname.match(/[a-z]{3}-[a-z]{4}-[a-z]{3}/i) || [""])[0] : "" };
   };
   J.callStart = async () => {                                         // WhatsApp Web: voice-call the open chat
     let b = btn(/^(voice call|audio call|call)$|voice call|audio call/i) || btn(/^(voice-call|audio-call|call|phone)$/);
