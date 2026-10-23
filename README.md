@@ -84,8 +84,10 @@ Gemini Live session just for the call), keeping to the mission you gave it.
   can't mistake the caller for you; headphones are better.
 - **Take over any time**: *"I'll talk"* (Jarvis goes silent and your real microphone goes into the call), *"carry on"* (Jarvis
   resumes), *"hang up"*.
-- **It says what it is**: it opens with *"Hello, this is Jarvis, <you>'s AI assistant... I'm taking notes"* (`CALL_DISCLOSE=off`
-  shortens the greeting, but it always answers honestly if asked), never imitates your voice, never agrees to money or
+- **It starts only when the call truly connects** (the call timer is running; ringing and the ring tone never count), waits a
+  moment for the person to say hello, then opens with *"Hello <name>, this is Jarvis."* and gets to the point, and hangs up as
+  soon as it is done. It doesn't say "AI assistant" or whose assistant it is unless asked (`CALL_DISCLOSE=on` adds
+  *"<you>'s AI assistant"* to the greeting), but it always answers honestly if asked who or what it is, never imitates your voice, never agrees to money or
   commitments, never gives out passwords/codes/card or ID details, hands anything unexpected back to you, and stops after
   `CALL_MAX_MINUTES` (10). Note that the other person's audio is processed by Gemini and kept as a text transcript in memory.
 - **How the audio works**: two virtual devices (PipeWire). The call tab's microphone is Jarvis' voice, the call tab's sound

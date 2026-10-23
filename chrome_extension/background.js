@@ -5,7 +5,7 @@
 //    last resort when a page ignores them, and is released at once
 //  - looks inside iframes and shadow DOM, notices new tabs a click opens, waits for slow pages
 const WS_URL = "ws://127.0.0.1:8765";
-const LIB_V = 9;
+const LIB_V = 10;
 let ws = null, connected = false;
 
 // ---------------------------------------------------------------- connection
@@ -180,7 +180,7 @@ async function execIn(tabId, frameId, name, args) {
   const call = () => chrome.scripting.executeScript({
     target, args: [name, args, frameId || 0],
     func: async (n, a, fid) => {
-      if (!(window.__jv && window.__jv.v === 9)) return "__NOLIB__";
+      if (!(window.__jv && window.__jv.v === 10)) return "__NOLIB__";
       window.__jv.fid = fid;
       return await window.__jv[n](...a);
     },
@@ -557,12 +557,12 @@ async function run(m) {
     }
     // ------------------------------------------------ calls
     case "call_state": {   // looks at every WhatsApp / Meet tab and reports the most advanced call state
-      const rank = { none: 0, ended: 1, prejoin: 2, joinable: 3, incoming: 3, ringing: 4, in_call: 5 };
+      const rank = { none: 0, ended: 1, prejoin: 2, joinable: 3, incoming: 3, ringing: 4, connecting: 4, in_call: 5 };
       let best = null;
       for (const t of await callTabs()) {
         try { const r = await inPage(t, "callState"); if (r && r.phase && (!best || rank[r.phase] > rank[best.phase])) best = { ...r, tab: t.id }; } catch { /* not injectable */ }
       }
-      return best ? `phase: ${best.phase}; mic: ${best.mic}; platform: ${best.platform}; tab: ${best.tab}${best.code ? "; code: " + best.code : ""}${best.buttons ? "; buttons: " + best.buttons : ""}` : "phase: none";
+      return best ? `phase: ${best.phase}; mic: ${best.mic}; platform: ${best.platform}; tab: ${best.tab}${best.code ? "; code: " + best.code : ""}; timer: ${best.timer ?? -1}${best.ui ? "; ui: " + best.ui.replace(/[;]/g, ",") : ""}${best.buttons ? "; buttons: " + best.buttons : ""}` : "phase: none";
     }
     case "call_start": {
       const t = (await chrome.tabs.query({ url: "https://web.whatsapp.com/*" }))[0];

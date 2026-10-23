@@ -93,6 +93,8 @@ async def main() -> int:
                 time.sleep(0.02)
 
         async def script():
+            await asyncio.sleep(3)
+            await asyncio.to_thread(person, "Hello? Who joined?")
             await asyncio.sleep(9)
             await asyncio.to_thread(person, "I think the slides are good, but please make the font bigger and add a summary slide. That's all from me.")
         sp = asyncio.create_task(script())
