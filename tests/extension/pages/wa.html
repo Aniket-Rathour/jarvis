@@ -4,16 +4,17 @@
 footer [contenteditable]{flex:1;border:1px solid #aaa;min-height:24px;padding:4px}</style>
 <div id=side><div style="padding:8px"><div contenteditable=true role=textbox aria-label="Search or start a new chat" data-tab=3 id=sb style="border:1px solid #aaa;padding:4px;min-height:22px"></div></div>
 <div id=pane-side></div></div>
-<div id=main><header style="padding:10px;border-bottom:1px solid #ccc"><span id=ht title=""></span> <button aria-label="Voice call" id=vc>Call</button></header><div id=msgs></div>
+<div id=main><header style="padding:10px;border-bottom:1px solid #ccc"><span id=ht title=""></span> <button aria-label="Voice call" id=vc>Call</button></header><div id=msgs><div class=m>Team: please join https://meet.google.com/xyz-abcd-efg at 5 pm</div></div><div id=ongoing style="display:none"><span>Ongoing call</span> <button aria-label="Join call" id=jc>Join call</button></div>
 <footer><div contenteditable=true role=textbox aria-label="Type a message" data-tab=10 id=mb></div><button aria-label="Send" id=send style="display:none">Send</button></footer></div>
 <div id=callui style="display:none;position:fixed;bottom:10px;right:10px;border:1px solid #333;padding:8px;background:#eee"><span id=cs>Calling…</span> <button aria-label="Mute" id=mutec>Mute</button> <button aria-label="End call" id=endc>End call</button></div>
 <script>
 vc.onclick=()=>{callui.style.display='block';cs.textContent='Calling…';setTimeout(()=>cs.textContent='00:02',1500)};
+jc.onclick=()=>{callui.style.display='block';cs.textContent='Connecting…';setTimeout(()=>cs.textContent='00:03',1200)};
 endc.onclick=()=>{callui.style.display='none'};
 mutec.onclick=()=>{mutec.setAttribute('aria-label',mutec.getAttribute('aria-label')==='Mute'?'Unmute':'Mute')};
 const names=["Aryan Dce Cse-1","Mom","Rahul Sharma","Aryan Kumar","Priya"];
 const pane=document.getElementById('pane-side');
-function render(q){pane.innerHTML='';names.filter(n=>!q||n.toLowerCase().includes(q.toLowerCase())).forEach(n=>{const d=document.createElement('div');d.setAttribute('role','listitem');d.innerHTML='<span title="'+n+'">'+n+'</span><div style="color:#888">last message...</div>';d.addEventListener('click',()=>{document.getElementById('ht').textContent=n;document.getElementById('ht').title=n;window.__open=n});pane.appendChild(d)})}
+function render(q){pane.innerHTML='';names.filter(n=>!q||n.toLowerCase().includes(q.toLowerCase())).forEach(n=>{const d=document.createElement('div');d.setAttribute('role','listitem');d.innerHTML='<span title="'+n+'">'+n+'</span><div style="color:#888">last message...</div>';d.addEventListener('click',()=>{ongoing.style.display=n==='Rahul Sharma'?'block':'none';document.getElementById('ht').textContent=n;document.getElementById('ht').title=n;window.__open=n});pane.appendChild(d)})}
 render('');
 document.getElementById('sb').addEventListener('input',e=>render(e.target.innerText.trim()));
 const mb=document.getElementById('mb'),send=document.getElementById('send');

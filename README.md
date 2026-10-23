@@ -92,6 +92,14 @@ Gemini Live session just for the call), keeping to the mission you gave it.
   goes to Jarvis, and both are looped to your speakers. Only audio Chrome opens *after* the call starts is touched (your music
   or another meeting is left alone); everything is put back and removed when the call ends. First call: Chrome asks to allow
   the microphone for web.whatsapp.com / meet.google.com: click Allow once.
+- **Already in a call? Say "take over"**: Jarvis finds the call running in Chrome (Meet or WhatsApp), mutes your other sounding tabs
+  for the duration, moves the call's audio onto its virtual devices and carries on from there ("Hello everyone, this is Jarvis,
+  <you>'s AI assistant. <you> asked me to take over..."). **"Join the meeting link in the group"** finds the Meet link in the open
+  chat; if that meeting is already open in a tab it reuses it instead of opening a second copy. **A group call running in a WhatsApp
+  chat** ("Ongoing call"): Jarvis presses Join and takes part. Ask "is there a call going on?" any time.
+- **Out-of-date extension**: Chrome only picks up extension changes when you press Reload on `chrome://extensions`. Jarvis now compares
+  versions when the extension connects, tells you in the window, and every call error says so plainly (the old behaviour was a silent
+  failure). `./run.sh --doctor` shows it too.
 - Answer an incoming WhatsApp call for you: *"answer the call and tell them I'll call back in an hour"*.
 - Caveat: WhatsApp Web's call screen changes often; the controls are matched by their labels and tested on mock pages, so the first
   real call may need a small selector fix (`./run.sh --doctor`, and the buttons it can see are shown in the log).

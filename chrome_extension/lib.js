@@ -1,7 +1,7 @@
 // Page-side toolkit injected by Jarvis Hands (window.__jv). Plain DOM events, no debugger bar needed.
 // Works through open shadow roots; background.js runs it inside iframes too (J.fid = frame id).
 (() => {
-  const V = 8;
+  const V = 9;
   if (window.__jv && window.__jv.v === V) return;
   const J = (window.__jv = { v: V, n: (window.__jv && window.__jv.n) || 0, fid: (window.__jv && window.__jv.fid) || 0 });
 
@@ -525,11 +525,12 @@
     } else {
       const end = btn(/^(end call|hang up|leave call|cancel call|end)\b/i);
       if (btn(/^(accept|answer)\b/i) && btn(/^(decline|reject)\b/i)) phase = "incoming";
+      else if (!end && btn(/^join( call| now| group call| voice call)?$/i) && /\b(call|ongoing)\b/.test(text)) phase = "joinable";   // a group call is running
       else if (end) phase = /\b(calling|ringing|connecting|waiting for)\b/.test(text) ? "ringing" : "in_call";
       else if (/\b(no answer|call declined|didn't answer|call ended|unavailable)\b/.test(text.slice(0, 600))) phase = "ended";
     }
     const buttons = phase === "none" ? "" : deep("button,[role=button]").filter(vis).map(label).filter(Boolean).slice(0, 12).join(" | ");
-    return { platform: meet ? "meet" : "whatsapp", phase, mic, buttons };
+    return { platform: meet ? "meet" : "whatsapp", phase, mic, buttons, code: meet ? (location.pathname.match(/[a-z]{3}-[a-z]{4}-[a-z]{3}/i) || [""])[0] : "" };
   };
   J.callStart = async () => {                                         // WhatsApp Web: voice-call the open chat
     let b = btn(/^(voice call|audio call|call)$|voice call|audio call/i) || btn(/^(voice-call|audio-call|call|phone)$/);
@@ -541,6 +542,23 @@
     if (menu) { await clickBtn(menu); await sleep(500); }
     const confirm = btn(/^(call|start call|start voice call|continue|ok)$/i);
     if (confirm && confirm !== b) { await clickBtn(confirm); await sleep(400); }
+    return { ok: true };
+  };
+  J.findLinks = (re) => {                                              // call/meeting links in the open page or chat, newest last
+    const rx = new RegExp(re, "gi"), out = [];
+    const add = (u) => { u = String(u).replace(/[).,;]+$/, ""); if (u && !out.includes(u)) out.push(u); };
+    deep("a[href]").forEach((a) => { const h = a.href || ""; if (new RegExp(re, "i").test(h)) add(h); });
+    (document.body.innerText.match(rx) || []).forEach((u) => add(/^https?:/i.test(u) ? u : "https://" + u));
+    return out.slice(-6);
+  };
+  J.waJoinCall = async () => {                                         // join a group call that is already running in this chat
+    let b = btn(/^join( call| now| group call| voice call)?$/i);
+    if (!b) return { ok: false, err: "no Join button for a call in this chat: there may be no call running, or the button is labelled differently" };
+    await flash(b.closest("button,[role=button]") || b, "joining the call");
+    await clickBtn(b);
+    await sleep(900);
+    const dlg = btn(/^(join|join call|join now|join with voice|continue)$/i);
+    if (dlg && dlg !== b) { await clickBtn(dlg); await sleep(500); }
     return { ok: true };
   };
   J.callAnswer = async () => (await clickBtn(btn(/^(accept|answer)\b/i))) ? { ok: true } : { ok: false, err: "no incoming call to answer" };

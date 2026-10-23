@@ -67,7 +67,10 @@ def run():
     else:
         _row(WARN, "Chrome extension", "start Jarvis to check")
     ext = json.loads((config.ROOT / "chrome_extension/manifest.json").read_text())
-    _row(OK, "Extension version", ext.get("version", "?"))
+    last_hello = _log_last("Chrome extension is out of date", "Chrome extension connected")
+    stale = "out of date" in last_hello
+    _row(BAD if stale else OK, "Extension version", f"files v{ext.get('version', '?')}" + (" - Chrome has an OLDER one loaded" if stale else ""),
+         "chrome://extensions -> click reload on Jarvis Hands" if stale else "")
 
     # calls
     pa = shutil.which("pactl") and shutil.which("pacat") and shutil.which("parec")
