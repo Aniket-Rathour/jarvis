@@ -13,10 +13,17 @@ import config
 log = logging.getLogger("jarvis.bridge")
 EXTENSION_ID = "acgjeghbhoabchdclfeckhokjjaikoaa"        # fixed by the "key" in chrome_extension/manifest.json
 ORIGIN = f"chrome-extension://{EXTENSION_ID}"
+
+
+def wanted_version() -> str:
+    try:
+        return json.loads((config.ROOT / "chrome_extension/manifest.json").read_text())["version"]
+    except (OSError, ValueError, KeyError):
+        return ""
 ACTIONS = ("context", "tabs", "read", "text", "selected", "links", "find", "open", "new_window", "close", "switch", "navigate",
            "back", "forward", "reload", "pin", "unpin", "mute", "unmute", "duplicate", "reopen", "zoom", "group", "history",
            "bookmark", "click", "hover", "drag", "check", "type", "clear", "fill", "key", "scroll", "wait_for", "media", "batch",
-           "wa_chat", "wa_send", "wait")
+           "wa_chat", "wa_send", "wa_join_call", "chat_links", "call_state", "call_isolate", "call_release", "wait")
 
 
 class Bridge:
@@ -27,7 +34,15 @@ class Bridge:
         self._server = None
         self.active: dict = {}          # the tab he is looking at: {id, title, url, app}, pushed by the extension
         self.loop = None
+        self.ext_version = ""           # version the connected extension reports
+        self.on_stale = None            # called when the connected extension is older than the one on disk
         self.on_change = None           # called with the new screen note whenever what he looks at changes
+
+    @property
+    def stale(self) -> bool:
+        """The extension loaded in Chrome is older than the files on disk (Chrome only picks up changes on 'Reload')."""
+        want = wanted_version()
+        return bool(self.ws and want and self.ext_version != want)
 
     @property
     def connected(self) -> bool:
@@ -57,6 +72,13 @@ class Bridge:
                 msg = json.loads(raw)
                 if "ping" in msg:
                     await ws.send('{"pong":1}')
+                elif "hello" in msg:
+                    self.ext_version = str(msg.get("version", ""))
+                    if self.stale and self.on_stale:
+                        try:
+                            self.on_stale(self.ext_version, wanted_version())
+                        except Exception:
+                            log.exception("stale handler")
                 elif "state" in msg:
                     self.active = msg["state"]
                     if self.on_change:
@@ -99,7 +121,13 @@ class Bridge:
             return f"error: Chrome took more than {timeout:.0f}s to {cmd}"
         except (ConnectionError, websockets.ConnectionClosed) as e:
             return f"error: {e}"
-        return str(r.get("result")) if r.get("ok") else f"error: {r.get('error')}"
+        if r.get("ok"):
+            return str(r.get("result"))
+        err = str(r.get("error"))
+        if "unknown command" in err or self.stale:
+            err += (f" (the Chrome extension is out of date: v{self.ext_version or '?'} loaded, v{wanted_version()} on disk. "
+                    "Open chrome://extensions and click the reload arrow on Jarvis Hands)")
+        return f"error: {err}"
 
 
 bridge = Bridge()

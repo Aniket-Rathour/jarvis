@@ -38,7 +38,8 @@ def _is_browser(item: dict) -> bool:
 
 
 class CallAudio:
-    def __init__(self, loop_to_speakers: bool = True, speaker_sink: str = "@DEFAULT_SINK@"):
+    def __init__(self, loop_to_speakers: bool = True, speaker_sink: str = "@DEFAULT_SINK@", match=None):
+        self.match = match or _is_browser          # which streams count as "the call page's" (tests pass a strict matcher)
         self.loop_to_speakers = loop_to_speakers
         self.speaker_sink = speaker_sink
         self.modules: list[str] = []
@@ -51,7 +52,9 @@ class CallAudio:
         self._watch: threading.Thread | None = None
 
     # ---- devices -------------------------------------------------------------------------------
-    def setup(self):
+    def setup(self, attach: bool = False):
+        """attach=True: the call is ALREADY running, so its streams already exist: take every running (not paused) browser
+        stream, and leave only paused ones (his paused music) alone."""
         self.teardown_leftovers()
         for args in (
             ("module-null-sink", f"sink_name={TO_CALL}", "sink_properties=device.description=Jarvis_voice_into_call"),
@@ -67,8 +70,12 @@ class CallAudio:
                 out = _pactl("load-module", "module-loopback", f"source={src}.monitor", f"sink={self.speaker_sink}", "latency_msec=50")
                 if out.isdigit():
                     self.modules.append(out)
-        self.baseline_in = {si["index"] for si in _json("list", "sink-inputs") if _is_browser(si)}
-        self.baseline_out = {so["index"] for so in _json("list", "source-outputs") if _is_browser(so)}
+        if attach:
+            self.baseline_in = {si["index"] for si in _json("list", "sink-inputs") if self.match(si) and si.get("corked")}
+            self.baseline_out = {so["index"] for so in _json("list", "source-outputs") if self.match(so) and so.get("corked")}
+        else:
+            self.baseline_in = {si["index"] for si in _json("list", "sink-inputs") if self.match(si)}
+            self.baseline_out = {so["index"] for so in _json("list", "source-outputs") if self.match(so)}
         self.active = True
         self._watch = threading.Thread(target=self._keep_routed, daemon=True)
         self._watch.start()
@@ -100,13 +107,13 @@ class CallAudio:
         for si in _json("list", "sink-inputs"):
             if si["index"] in self.baseline_in:
                 continue                       # was already playing before the call began: not part of the call
-            if _is_browser(si) and sinks.get(si.get("sink")) != FROM_CALL:
+            if self.match(si) and sinks.get(si.get("sink")) != FROM_CALL:
                 self.moved_in.setdefault(si["index"], sinks.get(si.get("sink"), "@DEFAULT_SINK@"))
                 _pactl("move-sink-input", str(si["index"]), FROM_CALL)
                 n_in += 1
         target = None if self.owner_mic else MIC
         for so in _json("list", "source-outputs"):
-            if not _is_browser(so) or so["index"] in self.baseline_out:
+            if not self.match(so) or so["index"] in self.baseline_out:
                 continue
             cur = sources.get(so.get("source"), "")
             if cur.endswith(".monitor") and cur != MIC:

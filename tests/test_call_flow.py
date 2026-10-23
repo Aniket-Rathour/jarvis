@@ -31,7 +31,7 @@ async def main() -> int:
     audio.pick_route = lambda *a, **k: SimpleNamespace(echo_possible=True)
     call_audio._pactl("load-module", "module-null-sink", "sink_name=jarvis_test_out")   # stands in for his speakers: stays silent
     real_cls = call_audio.CallAudio
-    call_audio.CallAudio = lambda **kw: real_cls(**{**kw, "speaker_sink": "jarvis_test_out"})
+    call_audio.CallAudio = lambda **kw: real_cls(**{**kw, "speaker_sink": "jarvis_test_out", "match": lambda it: (it.get("properties") or {}).get("application.name") == "JarvisTestChrome"})
     told, ui = [], []
     assistant = SimpleNamespace(client=genai.Client(api_key=config.GEMINI_API_KEY), ui=SimpleNamespace(send=lambda **k: ui.append(k)))
 

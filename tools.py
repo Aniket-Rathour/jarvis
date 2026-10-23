@@ -200,9 +200,12 @@ DECLARATIONS = [
         "start (platform whatsapp + who = the contact, OR platform meet + url = the link/code; mission = exactly what to say "
         "or find out, with every detail he gave) | answer (accept an incoming WhatsApp call and handle it; mission) | status | "
         "say (text = a live instruction or answer from him to pass to the person on the call) | takeover (he talks himself) | "
-        "resume (you carry on) | end. BEFORE start/answer you must show_plan with needs_approval=true reading back who, which "
+        "resume (you carry on) | end | attach (he is ALREADY in a call or meeting in Chrome and wants you to take it over: "
+        "mission = what to say) | join (a group call is running in the open WhatsApp chat: who = the chat, mission). "
+        "For a Meet link posted in a chat, use start with platform=meet and leave url empty: the link is found in the open chat. "
+        "BEFORE start/answer/attach/join you must show_plan with needs_approval=true reading back who, which "
         "app and what you will say, and wait for his yes.", {
-        "action": _s("STRING", enum=["start", "answer", "status", "say", "takeover", "resume", "end"]),
+        "action": _s("STRING", enum=["start", "answer", "attach", "join", "status", "say", "takeover", "resume", "end"]),
         "platform": _s("STRING", enum=["whatsapp", "meet"]), "who": _s("STRING", "WhatsApp contact or group name"),
         "url": _s("STRING", "Google Meet link or code like abc-defg-hij"),
         "mission": _s("STRING", "What to say or find out on the call, complete, with every detail"),
@@ -325,7 +328,7 @@ def ollama_tools() -> list[dict]:
 JOB_TOOLS = {"delegate_to_claude", "delegate_to_opencode", "install_packages", "install_gnome_extension"}
 ACTION_TOOLS = JOB_TOOLS | {"browser", "open_bookmark", "open_url", "web_search", "open_path", "open_app", "window", "run_command",
                             "write_file", "volume", "media", "clipboard"}
-NO_DEDUPE = {"show_plan", "update_step", "record_approval", "job_status", "find_bookmarks", "search_files",
+NO_DEDUPE = {"call", "show_plan", "update_step", "record_approval", "job_status", "find_bookmarks", "search_files",
              "cancel_job", "window", "browser", "remember", "recall", "todo", "recall_research", "forget", "read_file", "list_dir", "volume", "media", "look_at_screen", "point_at",
              "clear_pointer", "day_status", "day_update"}
 LABELS = {"open_bookmark": "Open bookmark", "find_bookmarks": "Look up bookmark", "open_url": "Open",
@@ -426,7 +429,7 @@ class Toolbox:
             return "it installs software"
         if name == "run_command" and desktop.RISKY.search(a.get("command", "")):
             return "the command changes the system"
-        if name == "call" and a.get("action") in ("start", "answer"):
+        if name == "call" and a.get("action") in ("start", "answer", "attach", "join"):
             return ("it phones a real person on his behalf: read back who, on which app, and what you will say (show_plan with "
                     "needs_approval=true) and wait for his yes")
         if name == "delegate_to_opencode" and RISKY_TASK.search(a.get("task", "")):
@@ -600,7 +603,7 @@ class Toolbox:
         """Returns a result string, or a Job for background tools."""
         key = name + json.dumps(a, sort_keys=True, default=str)
         now = time.time()
-        if name not in ("update_step", "job_status", "record_approval"):
+        if name not in ("update_step", "job_status", "record_approval", "call"):     # call: retry after a failure must work
             ukey = f"{self.utterance}:{key}"
             self.calls[ukey] = n = self.calls.get(ukey, 0) + 1
             if n >= 3 or (n == 2 and name not in ("read_file", "list_dir", "search_files", "find_bookmarks",
@@ -717,13 +720,17 @@ class Toolbox:
                 return await c.start(a.get("platform", "whatsapp"), a.get("who", ""), a.get("mission", ""), a.get("url", ""))
             if act == "answer":
                 return await c.start("whatsapp", a.get("who", "the caller"), a.get("mission", ""), incoming=True)
+            if act == "attach":
+                return await c.start("auto", a.get("who", ""), a.get("mission", ""), mode="attach")
+            if act == "join":
+                return await c.start("whatsapp", a.get("who", ""), a.get("mission", ""), mode="join")
             if act == "say":
                 return await c.say(a.get("text") or a.get("mission") or "")
             if act in ("takeover", "resume"):
                 return c.takeover(act == "takeover")
             if act == "end":
                 return await c.end()
-            return c.status()
+            return await c.status_async()
         if name == "remember":
             return await t(memory.remember, a.get("text", ""), a.get("kind") or "fact")
         if name == "forget":

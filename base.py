@@ -534,6 +534,8 @@ class Assistant:
                  "on" if self.half_duplex else "off", self.echo_tail)
         from browser_bridge import bridge
         bridge.on_change = self._screen_changed
+        bridge.on_stale = lambda have, want: (log.warning("Chrome extension is out of date (v%s, need v%s)", have, want),
+                                              self.ui.send(type="notice", text=f"Reload the Jarvis Hands extension in Chrome (v{have} loaded, v{want} available): chrome://extensions"))
         await bridge.start()
         tasks = [asyncio.create_task(c) for c in (self._ticker(), self._watch_audio_route(), self._narrator(), self._memory_keeper(), self._screen_feeder())]
         self.send_engine()

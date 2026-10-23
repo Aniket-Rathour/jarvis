@@ -5,7 +5,7 @@
 //    last resort when a page ignores them, and is released at once
 //  - looks inside iframes and shadow DOM, notices new tabs a click opens, waits for slow pages
 const WS_URL = "ws://127.0.0.1:8765";
-const LIB_V = 8;
+const LIB_V = 9;
 let ws = null, connected = false;
 
 // ---------------------------------------------------------------- connection
@@ -23,7 +23,7 @@ function scheduleRetry() {                 // Jarvis restarted: be back within s
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   try { ws = new WebSocket(WS_URL); } catch (e) { return; }
-  ws.onopen = () => { setBadge(true); lastPushed = ""; ws.send(JSON.stringify({ hello: "jarvis-hands", version: 3 })); pushState(0); };
+  ws.onopen = () => { setBadge(true); lastPushed = ""; ws.send(JSON.stringify({ hello: "jarvis-hands", version: chrome.runtime.getManifest().version })); pushState(0); };
   ws.onopen = ((orig) => () => { retry = 0; orig(); })(ws.onopen);
   ws.onclose = () => { setBadge(false); scheduleRetry(); };
   ws.onerror = () => setBadge(false);
@@ -180,7 +180,7 @@ async function execIn(tabId, frameId, name, args) {
   const call = () => chrome.scripting.executeScript({
     target, args: [name, args, frameId || 0],
     func: async (n, a, fid) => {
-      if (!(window.__jv && window.__jv.v === 8)) return "__NOLIB__";
+      if (!(window.__jv && window.__jv.v === 9)) return "__NOLIB__";
       window.__jv.fid = fid;
       return await window.__jv[n](...a);
     },
@@ -285,7 +285,7 @@ const fail = (r, dflt) => { throw new Error((r && r.err || dflt) + (r && r.near 
 
 async function run(m) {
   switch (m.cmd) {
-    case "ping": return `Jarvis Hands v3 (lib ${LIB_V})`;
+    case "ping": return `Jarvis Hands v${chrome.runtime.getManifest().version} (lib ${LIB_V})`;
 
     // ------------------------------------------------ seeing
     case "tabs": {
@@ -557,12 +557,12 @@ async function run(m) {
     }
     // ------------------------------------------------ calls
     case "call_state": {   // looks at every WhatsApp / Meet tab and reports the most advanced call state
-      const rank = { none: 0, ended: 1, prejoin: 2, incoming: 3, ringing: 4, in_call: 5 };
+      const rank = { none: 0, ended: 1, prejoin: 2, joinable: 3, incoming: 3, ringing: 4, in_call: 5 };
       let best = null;
       for (const t of await callTabs()) {
         try { const r = await inPage(t, "callState"); if (r && r.phase && (!best || rank[r.phase] > rank[best.phase])) best = { ...r, tab: t.id }; } catch { /* not injectable */ }
       }
-      return best ? `phase: ${best.phase}; mic: ${best.mic}; platform: ${best.platform}; tab: ${best.tab}${best.buttons ? "; buttons: " + best.buttons : ""}` : "phase: none";
+      return best ? `phase: ${best.phase}; mic: ${best.mic}; platform: ${best.platform}; tab: ${best.tab}${best.code ? "; code: " + best.code : ""}${best.buttons ? "; buttons: " + best.buttons : ""}` : "phase: none";
     }
     case "call_start": {
       const t = (await chrome.tabs.query({ url: "https://web.whatsapp.com/*" }))[0];
@@ -580,12 +580,49 @@ async function run(m) {
       if (!done) throw new Error(err || "no call page found");
       return done;
     }
+    case "call_isolate": {  // before taking over a call that is already running: silence other tabs so only the call's sound is captured
+      const rank = {};
+      const all = await callTabs();
+      let callTab = null;
+      for (const t of all) { try { const r = await inPage(t, "callState"); if (r && r.phase === "in_call") callTab = t; } catch { /* skip */ } }
+      if (!callTab) throw new Error("no call in progress in any WhatsApp or Meet tab");
+      const others = (await chrome.tabs.query({ audible: true })).filter((t) => t.id !== callTab.id && !t.mutedInfo.muted);
+      for (const t of others) await chrome.tabs.update(t.id, { muted: true });
+      const { jvMuted = [] } = await chrome.storage.local.get("jvMuted");
+      await chrome.storage.local.set({ jvMuted: [...new Set([...jvMuted, ...others.map((t) => t.id)])] });
+      return `call tab ${callTab.id} (${appOf(callTab.url)}); muted ${others.length} other sounding tab(s) for the duration`;
+    }
+    case "call_release": {
+      const { jvMuted = [] } = await chrome.storage.local.get("jvMuted");
+      for (const id of jvMuted) { try { await chrome.tabs.update(id, { muted: false }); } catch { /* tab gone */ } }
+      await chrome.storage.local.set({ jvMuted: [] });
+      return `unmuted ${jvMuted.length} tab(s)`;
+    }
+    case "chat_links": {     // meeting / call links in the open WhatsApp chat (or the active page)
+      const t = (await chrome.tabs.query({ url: "https://web.whatsapp.com/*" }))[0] || await activeTab();
+      const links = await inPage(t, "findLinks", [m.pattern || "(meet\\.google\\.com\\/[a-z]{3}-[a-z]{4}-[a-z]{3}|call\\.whatsapp\\.com\\/[A-Za-z0-9_-]+)"]);
+      return (links && links.length) ? links.join("\n") : "no meeting or call link in the open chat";
+    }
+    case "wa_join_call": {   // join the group call that is running in the open chat
+      const t = (await chrome.tabs.query({ url: "https://web.whatsapp.com/*" }))[0];
+      if (!t) throw new Error("WhatsApp Web isn't open");
+      const r = await inPage(t, "waJoinCall");
+      if (!r || !r.ok) throw new Error(r && r.err || "couldn't join the call");
+      return "joining the call";
+    }
     case "meet_join": {
       let code = String(m.url || "").trim();
       if (/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(code)) code = "https://meet.google.com/" + code;
       if (!/^https:\/\/meet\.google\.com\//.test(code)) throw new Error("that isn't a Google Meet link or code");
-      const t = await chrome.tabs.create({ url: code, active: true });
-      await ready(t);
+      const mcode = (code.match(/[a-z]{3}-[a-z]{4}-[a-z]{3}/i) || [""])[0].toLowerCase();
+      const have = mcode ? (await chrome.tabs.query({ url: "https://meet.google.com/*" })).find((x) => (x.url || "").toLowerCase().includes(mcode)) : null;
+      if (have) {                      // already open (maybe already joined): use it, don't open a second copy
+        await focusTab(have);
+        let st = null; try { st = await inPage(have, "callState"); } catch { /* ignore */ }
+        if (st && st.phase === "in_call") return "already in that meeting";
+      }
+      const t = have || await chrome.tabs.create({ url: code, active: true });
+      if (!have) await ready(t);
       let last = "the Join button never appeared";
       for (let i = 0; i < 30; i++) {
         const cur = await chrome.tabs.get(t.id);
