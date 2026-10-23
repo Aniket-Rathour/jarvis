@@ -243,7 +243,13 @@ def open_bookmark(query: str) -> str:
     return f'opened bookmark "{best["name"]}" -> {best["url"]}{extra}'
 
 
-def _chrome_open(url: str, profile: str = "Default"):
+def _chrome_open(url: str, profile: str = "Default", new: bool = False):
+    try:                                         # through the Jarvis Hands extension: reuses a tab that is already open
+        from browser_bridge import open_in_chrome
+        if open_in_chrome(url, new) is not None:
+            return
+    except Exception:
+        pass
     _detach(["google-chrome", f"--profile-directory={profile}", url])
 
 
@@ -301,12 +307,17 @@ def open_url(url: str, new_window: bool = False) -> str:
         return "chrome opened"
     if "://" not in url:
         url = "https://" + url
-    _detach(["google-chrome", "--profile-directory=Default", *(["--new-window"] if new_window else []), url])
+    if not new_window:
+        _chrome_open(url, "Default")
+    else:
+        _detach(["google-chrome", "--profile-directory=Default", "--new-window", url])
     return f"opened {url}"
 
 
 def web_search(query: str) -> str:
-    return open_url("https://www.google.com/search?q=" + urllib.parse.quote_plus(query))
+    url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(query)
+    _chrome_open(url, "Default", new=True)          # a search always gets its own tab
+    return f"opened {url}"
 
 
 # ---- installs (run as background jobs by jobs.py) -------------------------

@@ -12,6 +12,8 @@ music, reminders, questions) and only hands genuinely complex work to **Claude C
 ./run.sh            # or open "Jarvis" from the app grid
 ./run.sh --text     # no mic/speaker, type in the window
 ./run.sh --devices  # list audio devices (for MIC_DEVICE / SPEAKER_DEVICE in .env)
+./run.sh --doctor   # checks key, audio, Chrome extension, Qwen, OpenCode, memory - and says how to fix each
+tests/run_all.sh    # all tests; safe while Jarvis runs (temp memory file, isolated Chrome on port 8799)
 ```
 
 Put your key in `.env` (`GEMINI_API_KEY=...`, see `.env.example` for every setting). Closing the window quits.
@@ -69,6 +71,13 @@ Claude jobs, plans, today's memory, the cursor. The choice is remembered for the
 After a switch away, Qwen stays in memory for `LOCAL_KEEP_WARM_MIN` minutes so switching back is quick, then the GPU
 is freed. Screen vision, pointing, `ask_gemini` and research still use your Gemini key from either brain.
 
+## Qwen runs only when needed
+
+Ollama is no longer a background service (disabled at login). It starts when you switch to Qwen or give OpenCode a
+job, and **unloads the model and stops again** 2 minutes after you switch back to Gemini (`LOCAL_KEEP_WARM_MIN`),
+90 seconds after an OpenCode job ends, and when Jarvis quits. `STOP_OLLAMA_WHEN_IDLE=off` keeps the server up (the
+model still unloads). To start it at login again: `systemctl --user enable ollama`.
+
 ## OpenCode on Qwen, and Chrome control
 
 **OpenCode (coding by voice)**: say *"use opencode to add a login page to my flask app"* (or just ask for coding work).
@@ -86,6 +95,35 @@ Chrome works: a connection to this app, page reading with numbered elements, and
    *"click sign in"*, *"type hello in the search box and press enter"*: answered instantly by code. Longer web tasks
    are done by the brain step by step: read, click, type, read again.
 While the debugger is attached Chrome shows a "started debugging this browser" bar; it goes away seconds after the last action.
+
+### Memory, to-dos and what is on your screen
+
+- **Self-managing memory**: conversation older than 45 days is folded into one short searchable digest per day (kept
+  forever); only if the file outgrows a tenth of your free disk (at least 2 GB) are the oldest raw turns dropped
+  (`MEMORY_MAX_MB=<n>` sets a hard cap instead). Every 30 minutes Gemini reads the new conversation and saves the
+  lasting facts and to-dos by itself (never passwords or card numbers). To-dos take due dates ("by friday",
+  "tomorrow") and can be listed as today / overdue / this week. `python memory.py stats|search WORDS|todos|tidy|export FILE`.
+- **Long-term memory**: `~/.local/share/jarvis/memory.db` (SQLite, **no fixed cap**: it grows as needed and tidies itself). It keeps facts you tell it ("remember that…"), your **to-do list** ("add X to my
+  to-do", "what's on my list", "I did X", also whatever Jarvis finds in Notion), the **full result of every research /
+  Claude / OpenCode job** (searchable; ask "what did you find?" and he reads all of it), the conversation, and what you
+  were last doing. Both brains load it at start, so it survives restarts. Tools: `remember`, `recall`, `todo`, `recall_research`.
+- **Finds things by meaning**: "when is my sister's birthday" finds "Priya's birthday is 14 November" (Gemini
+  embeddings stored in the same file; plain word search when offline). Unknown things come back as unknown, not guesses.
+- **Knows what you're looking at**: the extension pushes every tab change (and which WhatsApp chat is open, checked
+  every 3 s) to Gemini as a silent note, so it acts at once instead of asking Chrome first.
+- **Knows what you're looking at (details)**: the extension reports your active tab, so with WhatsApp on screen "open Aryan's
+  chat" opens that chat in WhatsApp (never a file search). "Open WhatsApp" switches to the WhatsApp tab that is already
+  open; only "another/new one" opens a second. Typing goes to the named box (message vs search), and WhatsApp
+  messages are sent with `wa_chat` + `wa_send`.
+- **Jarvis Hands v3 can**: reuse tabs by app name ("open WhatsApp", "gmail", "youtube"); read pages and see your
+  highlighted text; click (by text, "the second Reply", inside a named section), hover (CSS menus too), drag and drop,
+  tick boxes, pick dropdown options, **fill a whole form** in one go; control video/audio (play, pause, skip 10 s,
+  speed, fullscreen); pin/mute/duplicate/reopen tabs, zoom, group tabs, search history and bookmarks, bookmark a page;
+  wait for slow pages and late-appearing buttons. It sees inside iframes and shadow DOM, notices when a click opens a
+  new tab, and if a page ignores a normal click it clicks with a real mouse (the debugger bar then shows for a moment).
+  A brief green ring shows what it is acting on.
+- **No more "started debugging" bar**: clicks and typing use ordinary page events; the debugger is only a last resort.
+- After updating the extension: `chrome://extensions` -> reload **Jarvis Hands**, then restart Jarvis.
 
 ## Routines and today's memory
 

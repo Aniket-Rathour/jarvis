@@ -9,6 +9,7 @@ from google.genai import types
 
 import config
 import desktop
+import memory
 from jobs import Job
 
 log = logging.getLogger("jarvis")
@@ -147,20 +148,73 @@ DECLARATIONS = [
         "workdir": _s("STRING", "Project folder to work in, e.g. ~/Documents/Aniket/myapp"),
         "interactive": _s("BOOLEAN", "Open the live OpenCode screen for him to steer instead of a background run")},
         ["task"], background=True),
-    _fn("browser", "Control the user's real Chrome (his logins, his tabs) through the Jarvis Hands extension: instant, "
-        "no extra agent. Actions: tabs (list), open (url), close (tab = current | others | title/url words), switch "
-        "(tab = next | previous | title words), navigate (url), back, forward, reload, read (page text and numbered "
-        "interactive elements), click (ref number from read, or text on it), type (text into a field: field = its "
-        "label, or a ref; submit=true presses Enter), key (e.g. Enter, Escape, ctrl+a), scroll (direction "
-        "up/down/top/bottom), find (text). For a web task do it step by step: read, then click/type, then read again "
-        "to check. Say in a few words what you do before each step.", {
-        "action": _s("STRING", enum=["tabs", "open", "close", "switch", "navigate", "back", "forward", "reload",
-                                     "read", "click", "type", "key", "scroll", "find"]),
-        "url": _s("STRING"), "tab": _s("STRING", "current, others, next, previous, or words from a tab's title/url"),
-        "ref": _s("STRING", "Element number shown by read"), "text": _s("STRING", "Text to click/find, or text to type"),
-        "field": _s("STRING", "Label/placeholder of the field to type into"), "submit": _s("BOOLEAN"),
-        "key": _s("STRING"), "direction": _s("STRING", enum=["up", "down", "top", "bottom", "left", "right"])},
+    _fn("browser", "Control the user's REAL Chrome (his logins, his open tabs) instantly through the Jarvis Hands extension. "
+        "ALWAYS start with action=context when his request may refer to what he is looking at ('open Aryan's chat', "
+        "'scroll down', 'click sign in', 'reply', 'search here', 'pause this'): it returns the tab on his screen, its "
+        "controls and his other tabs, and that tab is where the request happens. "
+        "SEE: context | tabs | read | text (full article text, offset to continue) | selected (what he highlighted) | links | find. "
+        "TABS: open (url; REUSES a tab that already has the site, new=true only if he says 'another/new one') | new_window | "
+        "close (tab = current/others/duplicates/words; all=true closes every match) | switch (next/previous/words) | navigate | "
+        "back | forward | reload | pin | unpin | mute | unmute | duplicate | reopen (last closed tab) | zoom (value in/out/reset/150) "
+        "| group (name, tabs) | history (text) | bookmark (this page, or text to search bookmarks). "
+        "DO: click (text or ref; nth=2 for 'the second Reply'; within='container text'; kind=button/link/checkbox…) | hover | "
+        "drag (text -> to) | check (text, on=true/false for checkboxes/switches) | type (text; ALWAYS give field = the box: "
+        "message/search/subject/name/its label, or ref; submit=true presses Enter; append=true keeps old text; works on dropdowns "
+        "too) | clear (field) | fill (fields=['Name=Aniket','Subscribe=yes','Country=India'] fills a whole form) | key "
+        "(Enter, Escape, ctrl+a, ctrl+c, k…) | scroll (direction; or text= to scroll an item into view) | wait_for (text, "
+        "gone=true to wait until it disappears) | media (value for the video/audio: action play/pause/toggle/mute/unmute/seek "
+        "'+10' or '1:30'/speed/volume/fullscreen/next). "
+        "BATCH: for a known sequence of 2+ steps on the same page use batch (steps=[...]) instead of many calls. "
+        "SAFETY: it never types passwords, card numbers or one-time codes: tell him to enter those himself. "
+        "WHATSAPP WEB: wa_chat (name) opens a person's chat, wa_send (text) sends in the OPEN chat - always wa_chat then wa_send, "
+        "never type into the search box to send. Works inside iframes and shadow DOM; if a page ignores clicks it falls back to "
+        "a real mouse click by itself. Do web tasks step by step, check each result, and say in a few words what you are doing.", {
+        "action": _s("STRING", enum=["context", "tabs", "read", "text", "selected", "links", "find", "open", "new_window", "close",
+                                     "switch", "navigate", "back", "forward", "reload", "pin", "unpin", "mute", "unmute",
+                                     "duplicate", "reopen", "zoom", "group", "history", "bookmark", "click", "hover", "drag",
+                                     "check", "type", "clear", "fill", "key", "scroll", "wait_for", "media", "batch", "wa_chat", "wa_send"]),
+        "url": _s("STRING"), "tab": _s("STRING", "current, others, duplicates, next, previous, or words from a tab's title/url/app"),
+        "ref": _s("STRING", "Element number shown by read/context"),
+        "text": _s("STRING", "Text to click/find/wait for, text to type, a history/bookmark search, or the WhatsApp message"),
+        "name": _s("STRING", "wa_chat: the person or group name; group: the group's title"),
+        "field": _s("STRING", "type/clear: which box - message, search, subject, to, name, or its label"),
+        "fields": _s("ARRAY", "fill: 'Label=value' strings", items=_s("STRING")),
+        "steps": _s("ARRAY", "batch: up to 12 steps run in ONE call (much faster), each a JSON string like "
+                    "'{\"do\":\"click\",\"text\":\"Sign in\"}' or '{\"do\":\"type\",\"field\":\"email\",\"text\":\"x\"}'; stops at the first failure",
+                    items=_s("STRING")),
+        "to": _s("STRING", "drag: text of the drop target"), "within": _s("STRING", "limit click/find to inside the container with this text"),
+        "kind": _s("STRING", "limit click/find to a kind: button, link, checkbox, radio, input, select, tab, menuitem…"),
+        "nth": _s("INTEGER", "pick the nth match (1 = first) when several look alike"),
+        "submit": _s("BOOLEAN"), "append": _s("BOOLEAN", "type: add to what is there instead of replacing"),
+        "new": _s("BOOLEAN", "open: force a NEW tab even if the site is already open"),
+        "on": _s("BOOLEAN", "check: true to tick, false to untick"), "gone": _s("BOOLEAN", "wait_for: wait until it disappears"),
+        "all": _s("BOOLEAN", "close: close every matching tab"), "double": _s("BOOLEAN"), "right": _s("BOOLEAN"),
+        "incognito": _s("BOOLEAN", "new_window: private window"), "hard": _s("BOOLEAN", "reload: bypass cache"),
+        "key": _s("STRING", "Enter, Escape, Tab, ArrowDown, ctrl+a…"), "value": _s("STRING", "zoom or media value"),
+        "media_action": _s("STRING", enum=["play", "pause", "toggle", "mute", "unmute", "seek", "speed", "volume", "fullscreen", "next"]),
+        "offset": _s("INTEGER", "text: character offset to continue reading"), "timeout": _s("INTEGER", "wait_for: seconds"),
+        "direction": _s("STRING", enum=["up", "down", "top", "bottom", "left", "right"])},
         ["action"]),
+    _fn("remember", "Save something to your permanent memory (survives restarts): facts about him, people, preferences, "
+        "decisions, anything he asks you to remember or that will matter later.", {"text": _s("STRING", "The fact, in a full sentence"),
+        "kind": _s("STRING", enum=["fact", "preference", "person", "note"])}, ["text"]),
+    _fn("recall", "Search your permanent memory (notes, to-dos, past research and jobs, earlier conversation) for anything "
+        "he asks about from before. Use it whenever he refers to something you may have been told or found earlier.",
+        {"query": _s("STRING")}, ["query"]),
+    _fn("forget", "Delete remembered notes that contain these words.", {"match": _s("STRING")}, ["match"]),
+    _fn("todo", "His to-do list, kept permanently. add: put items on it (also whatever you find in Notion, mail or a page "
+        "that he wants tracked). list: read it out. done: mark one done by words or number. reopen / remove likewise.",
+        {"action": _s("STRING", enum=["add", "list", "done", "reopen", "remove"]),
+         "items": _s("ARRAY", "add: the to-do texts", items=_s("STRING")),
+         "match": _s("STRING", "done/reopen/remove: words of the item, or its number"),
+         "source": _s("STRING", "add: where it came from, e.g. notion, gmail, voice"),
+         "due": _s("STRING", "add: when it is due - today, tomorrow, friday, in 3 days, 25 oct (or put 'by friday' in the item)"),
+         "when": _s("STRING", "list: all | today (due today or overdue) | overdue | week", enum=["all", "today", "overdue", "week"])},
+        ["action"]),
+    _fn("recall_research", "Read back the FULL stored result of earlier research or a finished Claude/OpenCode job: use it "
+        "when he asks 'what did you find', 'tell me about that research', 'what was the result', then tell him ALL of it "
+        "in detail, not a one-liner. Give words about the topic, or nothing for the latest.",
+        {"query": _s("STRING"), "id": _s("INTEGER")}),
     _fn("install_packages", "Install system packages (dnf) or apps (flatpak from Flathub). Needs an approved plan "
         "listing the packages. Runs in the background.", {
         "packages": _s("ARRAY", items=_s("STRING")), "source": _s("STRING", enum=["dnf", "flatpak"])},
@@ -193,17 +247,72 @@ def _json_schema(s: types.Schema) -> dict:
     return d
 
 
+# ---- the Qwen brain gets a COMPACT tool list: a small model with a small context window (6-8k tokens) cannot carry
+# 36 verbose tool definitions (~6000 tokens) and still have room to think. These keep only what it needs.
+LOCAL_TOOLS = {                 # tool -> parameters it keeps (None = all). Things the instant voice commands already
+    # cover (routines, pointing, windows, plans, installs) are left out of the model's list on purpose.
+    "open_bookmark": None, "open_url": ["url"], "web_search": None, "open_app": None, "search_files": ["query"],
+    "open_path": None, "read_file": None, "write_file": ["path", "content"], "run_command": ["command"],
+    "volume": None, "media": None, "clipboard": None, "set_reminder": None, "look_at_screen": None,
+    "switch_brain": None, "ask_gemini": None, "deep_research": ["topic"],
+    "delegate_to_claude": ["task", "where", "complexity", "workdir"], "delegate_to_opencode": ["task", "workdir"],
+    "browser": ["action", "url", "text", "name", "field", "submit", "tab", "key", "direction", "fields"],
+    "remember": None, "recall": None, "todo": ["action", "items", "match", "due"], "recall_research": ["query"],
+}
+LOCAL_DESC = {                  # one tight line each where the full text is long
+    "browser": "Control his real Chrome. Call action=context FIRST when he refers to the screen. type needs field= "
+               "(message/search/…). open reuses a tab. WhatsApp: wa_chat(name) then wa_send(text).",
+    "delegate_to_claude": "Hand a COMPLEX job to Claude (where=terminal for code on this PC, where=chrome for websites). Pass every detail.",
+    "delegate_to_opencode": "Coding job for OpenCode on the local model (build/edit/fix code in a project folder).",
+    "todo": "His permanent to-do list: add (items, due), list, done/remove (match).",
+    "deep_research": "Research a topic thoroughly on the web (takes minutes).",
+    "run_routine": "Run his morning_plan, night_log or weekly_review.",
+    "remember": "Save a fact to permanent memory.", "recall": "Search permanent memory.",
+    "recall_research": "Read back the full result of earlier research/jobs.",
+    "ask_gemini": "Ask a stronger cloud model something hard (maths, long explanations, drafts).",
+    "show_plan": "Show a step checklist (needs_approval=true before installs/deletes).",
+}
+LOCAL_BROWSER_ACTIONS = ["context", "tabs", "read", "text", "open", "close", "switch", "navigate", "back", "reload", "click",
+                         "type", "fill", "key", "scroll", "wa_chat", "wa_send"]
+
+
+def _first_sentence(t: str, n: int = 110) -> str:
+    t = re.split(r"(?<=[.!?])\s", t.strip(), 1)[0]
+    return t if len(t) <= n else t[:n].rsplit(" ", 1)[0]
+
+
+def _compact(d: dict, keep: list[str] | None) -> dict:
+    props = d.get("properties", {})
+    keep_names = list(props) if keep is None else [k for k in keep if k in props]
+    out_props = {}
+    for k in keep_names:
+        v = dict(props[k])
+        v.pop("description", None)                         # names + types + enums are enough
+        if "items" in v:
+            v["items"] = {"type": v["items"].get("type", "string")}
+        out_props[k] = v
+    return {"type": "object", "properties": out_props, "required": [r for r in d.get("required", []) if r in out_props]}
+
+
 def ollama_tools() -> list[dict]:
-    """The same tools in the OpenAI/Ollama function-calling format."""
-    return [{"type": "function", "function": {"name": f.name, "description": f.description,
-                                               "parameters": _json_schema(f.parameters)}}
-            for f in DECLARATIONS if f.name not in LOCAL_EXCLUDE]
+    """The compact tool list for the local (Qwen) brain, in the OpenAI/Ollama function-calling format."""
+    out = []
+    for f in DECLARATIONS:
+        if f.name not in LOCAL_TOOLS:
+            continue
+        schema = _compact(_json_schema(f.parameters), LOCAL_TOOLS[f.name])
+        if f.name == "browser":
+            schema["properties"]["action"]["enum"] = LOCAL_BROWSER_ACTIONS
+        desc = LOCAL_DESC.get(f.name) or _first_sentence(f.description)
+        out.append({"type": "function", "function": {"name": f.name, "description": desc, "parameters": schema}})
+    return out
+
 
 JOB_TOOLS = {"delegate_to_claude", "delegate_to_opencode", "install_packages", "install_gnome_extension"}
 ACTION_TOOLS = JOB_TOOLS | {"browser", "open_bookmark", "open_url", "web_search", "open_path", "open_app", "window", "run_command",
                             "write_file", "volume", "media", "clipboard"}
 NO_DEDUPE = {"show_plan", "update_step", "record_approval", "job_status", "find_bookmarks", "search_files",
-             "cancel_job", "window", "browser", "read_file", "list_dir", "volume", "media", "look_at_screen", "point_at",
+             "cancel_job", "window", "browser", "remember", "recall", "todo", "recall_research", "forget", "read_file", "list_dir", "volume", "media", "look_at_screen", "point_at",
              "clear_pointer", "day_status", "day_update"}
 LABELS = {"open_bookmark": "Open bookmark", "find_bookmarks": "Look up bookmark", "open_url": "Open",
           "web_search": "Search", "search_files": "Find file", "open_path": "Open", "open_app": "Launch",
@@ -214,7 +323,7 @@ LABELS = {"open_bookmark": "Open bookmark", "find_bookmarks": "Look up bookmark"
           "set_reminder": "Reminder", "look_at_screen": "Looking at your screen", "point_at": "Pointing at",
           "clear_pointer": "Hide pointer", "deep_research": "Research", "day_status": "Today's memory",
           "day_update": "Updating today's memory", "run_routine": "Routine", "routine_reply": "Routine reply",
-          "switch_brain": "Switch brain", "browser": "Chrome", "delegate_to_opencode": "OpenCode"}
+          "switch_brain": "Switch brain", "browser": "Chrome", "delegate_to_opencode": "OpenCode", "remember": "Remember", "recall": "Recall", "todo": "To-do", "recall_research": "Recall research", "forget": "Forget"}
 
 
 CODE_TASK = re.compile(r"\b(code|script|project|repo(?:sitory)? (?:in|at|on) (?:my |the )?(?:disk|folder|pc)|function|"
@@ -410,15 +519,17 @@ class Toolbox:
                 "across sources and note disagreements and dates; "
                 + (f"(4) save the full report as Markdown, with the source URLs, to ~/Documents/Research/{slug}.md; "
                    if save else "")
-                + "(5) finish with a spoken-style summary of at most 5 short sentences with the key findings"
-                + (" and the path of the saved report." if save else ".")
+                + "(5) finish with a complete spoken-style briefing (12 to 20 sentences, plain words, no markdown) covering EVERY key "
+                "finding, the important numbers and dates, where sources disagree, and what you could not verify"
+                + (", then the path of the saved report." if save else ".")
                 + "\nNever invent facts; say plainly what you could not verify.")
         self.plan = {"title": f"Research: {topic[:50]}", "steps": [{"text": t, "status": "pending", "note": ""}
                                                                    for t in self.RESEARCH_STEPS], "approval": None}
         steps = self.link_steps("delegate_to_claude")
         self.j.ui.send(type="plan", **self.plan)
         return self.j.jobs.claude(task, False, False, "~", fc, gen, self.plan_texts(steps), "high",
-                                  report="up to 4 short sentences", label=f"Research: {topic}")
+                                  report="a thorough spoken briefing of everything important, 8 to 15 sentences, then say the full text is "
+                                         "saved and offer more detail", label=f"Research: {topic}", deliver_chars=12000)
 
     def _push_plan(self):
         if self.plan:
@@ -495,15 +606,22 @@ class Toolbox:
     async def _browser(self, a: dict) -> str:
         from browser_bridge import bridge
         act = a.get("action", "")
-        args = {k: a[k] for k in ("url", "tab", "ref", "text", "field", "submit", "key", "direction") if a.get(k) not in (None, "")}
-        if act == "close" and args.get("tab") not in (None, "current", "others"):
-            pass                                              # a tab named by words: handled by the extension
-        out = await bridge.call(act, **args)
+        keys = ("url", "tab", "ref", "text", "name", "field", "fields", "to", "within", "kind", "nth", "submit", "append", "new", "on",
+                "gone", "all", "double", "right", "incognito", "hard", "key", "value", "offset", "direction", "steps")
+        args = {k: a[k] for k in keys if a.get(k) not in (None, "")}
+        if a.get("timeout"):
+            args["secs"] = a["timeout"]
+        if act == "media":
+            args["action"] = a.get("media_action") or a.get("action_name") or "toggle"
+        if act == "group":
+            args["tabs"] = a.get("tab") or a.get("text") or "current"
+        slow = act in ("batch", "open", "navigate", "reload", "wa_chat", "wa_send", "back", "forward", "wait_for", "click", "fill")
+        out = await bridge.call(act, timeout=50 if slow else 25, **args)
         if out.startswith("error: the Chrome extension isn't connected"):
             return ("error: the Chrome extension isn't connected yet, so do NOT retry the browser tool. Do the task with "
                     "delegate_to_claude where=chrome instead, and tell the user once: run ./install_extension.sh "
                     "(3 clicks) to give you instant Chrome control.")
-        return out[:3500]
+        return out[:5000]
 
     async def _run(self, name: str, a: dict, fc, gen: int, steps: list[int]):
         t = asyncio.to_thread
@@ -574,12 +692,37 @@ class Toolbox:
             return jobs.cancel(a.get("job_id", ""))
         if name == "browser":
             return await self._browser(a)
+        if name == "remember":
+            return await t(memory.remember, a.get("text", ""), a.get("kind") or "fact")
+        if name == "forget":
+            return await t(memory.forget, a.get("match", ""))
+        if name == "recall":
+            q = a.get("query", "")
+            words = await t(memory.recall, q)
+            meaning = await t(memory.semantic_recall, self.j.client, q) if getattr(self.j, "client", None) else []
+            if not meaning:
+                return words
+            seen = {m.split(": ", 1)[-1][:80] for m in meaning}
+            rest = [l for l in words.splitlines() if l.split(": ", 1)[-1][:80] not in seen and not l.startswith("nothing in memory")]
+            return "\n".join(meaning + rest)
+        if name == "recall_research":
+            return await t(memory.get_research, a.get("query", ""), int(a.get("id") or 0))
+        if name == "todo":
+            act = a.get("action", "list")
+            if act == "add":
+                return await t(memory.todo_add, list(a.get("items") or []), a.get("source") or "voice", a.get("due") or "")
+            if act in ("done", "reopen", "remove"):
+                return await t(memory.todo_done, a.get("match", ""), act == "reopen", act == "remove")
+            return await t(memory.todo_list, "open", a.get("when") or "all")
         if name == "delegate_to_opencode":
             task = a.get("task", "").strip()
             if not task:
                 return "error: empty task"
             if (dup := jobs.find_running(task)):
                 return f"ALREADY RUNNING as {dup.id}; don't start it again."
+            import ollama_ctl
+            if not await t(ollama_ctl.ensure_running):
+                return "error: couldn't start the local model server (systemctl --user status ollama)"
             try:
                 return jobs.opencode(task, bool(a.get("interactive")), a.get("workdir", ""), fc, gen, self.plan_texts(steps))
             except RuntimeError as e:

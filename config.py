@@ -25,12 +25,12 @@ BRAIN = _env("BRAIN", "auto").lower()
 OLLAMA_HOST = _env("OLLAMA_HOST", "http://127.0.0.1:11434")
 # same model as OpenCode uses (qwen3.8:27b with a 16k default context): one copy in memory, never two on the 8 GB GPU
 LOCAL_MODEL = _env("LOCAL_MODEL", "qwen3.8-oc")
-LOCAL_CTX = int(_env("LOCAL_CTX", "6144"))                  # context window; smaller = faster and lighter
+LOCAL_CTX = int(_env("LOCAL_CTX", "8192"))                  # context window; smaller = faster and lighter
 # GPU layers for Qwen: auto = chosen from the VRAM left after the speech model loads (more layers = faster, but
 # too many runs out of memory), or a fixed number such as 20
 LOCAL_GPU_LAYERS = _env("LOCAL_GPU_LAYERS", "auto").lower()
 LOCAL_THREADS = int(_env("LOCAL_THREADS", "0"))             # CPU threads for the layers that don't fit on the GPU (0 = auto)
-LOCAL_KEEP_WARM_MIN = int(_env("LOCAL_KEEP_WARM_MIN", "10"))  # minutes the model stays in memory after you switch away
+LOCAL_KEEP_WARM_MIN = int(_env("LOCAL_KEEP_WARM_MIN", "2"))  # minutes the model stays in memory after you switch away
 WHISPER_MODEL = _env("WHISPER_MODEL", "large-v3-turbo")     # speech-to-text; small.en is lighter
 WHISPER_COMPUTE = _env("WHISPER_COMPUTE", "int8_float16")
 WHISPER_LANGUAGE = _env("WHISPER_LANGUAGE", "en")
@@ -56,6 +56,13 @@ VISION_MODELS = [m.strip() for m in _env("GEMINI_VISION_MODELS",
 # OpenCode coding agent, run on the local Qwen model (provider "ollama" in ~/.config/opencode/opencode.json)
 OPENCODE_BIN = _env("OPENCODE_BIN")
 OPENCODE_MODEL = _env("OPENCODE_MODEL", "ollama/qwen3.8-oc")
+
+# Stop the Ollama server (not just unload the model) when no brain or OpenCode job needs it; it restarts on demand
+STOP_OLLAMA_WHEN_IDLE = _env("STOP_OLLAMA_WHEN_IDLE", "on").lower() != "off"
+
+# Long-term memory file (~/.local/share/jarvis/memory.db). No fixed cap by default: old conversation is folded into
+# daily digests, and only if the disk runs low is the oldest raw data dropped. A number here sets a hard cap in MB.
+MEMORY_MAX_MB = int(_env("MEMORY_MAX_MB", "0"))        # 0 = dynamic: grows as needed, tidies itself (see memory.py)
 
 # Chrome extension bridge: the extension in ./chrome_extension connects here (only from that extension's origin)
 BRIDGE_PORT = int(_env("BRIDGE_PORT", "8765"))

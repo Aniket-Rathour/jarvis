@@ -1,0 +1,28 @@
+<!doctype html><title>Complex</title><meta charset=utf-8>
+<style>body{font:14px sans-serif;padding:10px}.menu{display:inline-block;padding:6px;border:1px solid #999}.sub{display:none;border:1px solid #999;padding:4px}.menu:hover .sub{display:block}#dz{width:120px;height:60px;border:2px dashed #888;margin:6px}#dr{background:#fc6;width:80px;padding:4px}</style>
+<h2 id=hd>Complex test page</h2>
+<p id=txt>Select this sentence for the selection test.</p>
+<div class=menu id=m1>Menu<div class=sub id=sub><span role=menuitem id=setm onclick="document.title='settings opened'">Settings</span></div></div><br>
+<div id=replies><div>Post A <button class=r onclick="this.textContent='Replied A'">Reply</button></div><div>Post B <button class=r onclick="this.textContent='Replied B'">Reply</button></div><div>Post C <button class=r onclick="this.textContent='Replied C'">Reply</button></div></div>
+<label>Country <select id=c><option>India</option><option>Germany</option><option>Brazil</option></select></label>
+<label><input type=checkbox id=sub1> Subscribe to news</label> <label><input type=checkbox id=ad checked> Accept ads</label><br>
+<button id=trusted>Trusted Only</button> <span id=tr></span>
+<script>document.getElementById('trusted').addEventListener('click',e=>{if(!e.isTrusted)return;document.title='trusted click ok'})</script>
+<a href="/result.html" target=_blank id=nt>Open in new tab</a><br>
+<div id=dr draggable=true>Drag me</div><div id=dz>Drop here</div>
+<script>
+const dr=document.getElementById('dr'),dz=document.getElementById('dz');
+dr.addEventListener('dragstart',e=>e.dataTransfer.setData('text','x'));dz.addEventListener('dragover',e=>e.preventDefault());
+dz.addEventListener('drop',e=>{e.preventDefault();dz.textContent='Dropped!'});
+setTimeout(()=>{const b=document.createElement('button');b.textContent='Late Button';b.onclick=()=>document.title='late ok';document.body.appendChild(b)},1200);
+class MyEl extends HTMLElement{constructor(){super();const s=this.attachShadow({mode:'open'});s.innerHTML='<button id=sb>Shadow Btn</button> <input placeholder="Shadow field">';s.getElementById('sb').onclick=()=>document.title='shadow clicked'}}
+customElements.define('my-el',MyEl);
+const r=document.createRange();r.selectNodeContents(document.getElementById('txt'));getSelection().addRange(r);
+</script>
+<my-el></my-el><br><iframe src="/frame.html" width=300 height=100 id=fr></iframe>
+<div contenteditable=true id=ce aria-label="Notes editor" style="border:1px solid #888;min-height:30px"></div>
+<canvas id=cv width=64 height=64></canvas><video id=vid muted style="width:120px"></video>
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d');setInterval(()=>{ctx.fillStyle='#'+Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');ctx.fillRect(0,0,64,64)},100);
+const v=document.getElementById('vid');v.srcObject=cv.captureStream(10);v.play().catch(()=>{});
+</script>

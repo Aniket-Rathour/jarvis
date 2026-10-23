@@ -46,6 +46,14 @@ B_NAV = re.compile(rf"^{_P}(?P<a>go back|go forward|reload|refresh)(?: the page|
 B_SCROLL = re.compile(rf"^{_P}scroll (?:(?P<d>down|up)|to (?:the )?(?P<e>top|bottom))(?: a bit| a little)?[.!?]*$", re.I)
 B_CLICK = re.compile(rf"^{_P}(?:click|press|tap|hit)(?: on)? (?:the )?(?P<t>.{{2,60}}?)(?: button| link| tab)?[.!?]*$", re.I)
 B_TYPE = re.compile(rf"^{_P}type (?P<x>.+?)(?: (?:in|into) (?:the )?(?P<f>[\w ]{{2,30}}))?(?P<s>(?:,? and| then) (?:press )?(?:enter|search|submit))?[.!?]*$", re.I)
+B_WA_CHAT = re.compile(rf"^{_P}(?:open|go to|show|switch to|find) (?:(?:the |my )?(?:chat|conversation)s? (?:with|of|for) (?P<n>.+?)|(?P<n2>[\w .'-]{{2,40}}?)(?:'s| s)? (?:chat|conversation))(?: (?:on|in) whatsapp)?[.!?]*$", re.I)
+B_TABOP = re.compile(rf"^{_P}(?P<op>pin|unpin|mute|unmute|duplicate) {THIS}(?:tab|page)[.!?]*$", re.I)
+B_REOPEN = re.compile(rf"^{_P}(?:reopen|restore|bring back|undo close(?: of)?) (?:the |my )?(?:last |recently |just )?(?:closed )?(?:tab|window)(?: (?:i|that i) (?:just )?closed)?[.!?]*$", re.I)
+B_ZOOM = re.compile(rf"^{_P}zoom (?P<z>in|out|reset)[.!?]*$|^{_P}(?:make (?:the )?(?:text|page) )?(?P<z2>bigger|smaller)[.!?]*$", re.I)
+B_BOOKMARK = re.compile(rf"^{_P}(?:bookmark|save) {THIS}(?:page|tab|site)(?: as a bookmark)?[.!?]*$", re.I)
+B_SEEK = re.compile(rf"^{_P}(?:(?P<f>skip|forward|go forward|fast forward)(?: ahead)?|(?P<b>rewind|go back|back|skip back)) (?P<n>\d+) ?(?:seconds?|secs?|s)[.!?]*$", re.I)
+B_FULL = re.compile(rf"^{_P}(?:full ?screen|exit full ?screen|go full ?screen)(?: the video)?[.!?]*$", re.I)
+B_SPEED = re.compile(rf"^{_P}(?:set )?(?:the )?(?:playback )?speed (?:to )?(?P<v>\d+(?:\.\d+)?)x?[.!?]*$", re.I)
 B_KEY = re.compile(rf"^{_P}press (?:the )?(?P<k>enter|escape|tab|backspace|space)(?: key)?[.!?]*$", re.I)
 OPENCODE = re.compile(rf"^{_P}(?:use |ask |tell |let |get )?open ?code(?: to| and)? (?P<task>.{{6,}}?)[.!?]*$|"
                       rf"^{_P}(?P<task2>(?:code|build|write|create|fix|refactor|make|add).{{6,}}?) (?:with|using|in|on) (?:open ?code|qwen)[.!?]*$", re.I)
@@ -65,6 +73,29 @@ async def _chrome(j, t: str) -> str | None:
         return _say(j, "New tab, sir." if ok(await _tool(j, "browser", {"action": "open"})) else "I couldn't, sir.")
     if m := B_NEXT.match(t):
         return _say(j, "Done, sir." if ok(await _tool(j, "browser", {"action": "switch", "tab": m.group("d").lower()})) else "I couldn't, sir.")
+    if m := B_TABOP.match(t):
+        out = await _tool(j, "browser", {"action": m.group("op").lower()})
+        return _say(j, "Done, sir." if ok(out) else "I couldn't, sir.")
+    if B_REOPEN.match(t):
+        out = await _tool(j, "browser", {"action": "reopen"})
+        return _say(j, "Brought it back, sir." if ok(out) else "There's nothing to reopen, sir.")
+    if m := B_ZOOM.match(t):
+        z = (m.group("z") or {"bigger": "in", "smaller": "out"}[m.group("z2").lower()]).lower()
+        out = await _tool(j, "browser", {"action": "zoom", "value": z})
+        return _say(j, out.replace("zoom is", "Zoom is") + ", sir." if ok(out) else "I couldn't, sir.")
+    if B_BOOKMARK.match(t):
+        out = await _tool(j, "browser", {"action": "bookmark"})
+        return _say(j, "Bookmarked, sir." if ok(out) else "I couldn't, sir.")
+    if m := B_SEEK.match(t):
+        n = int(m.group("n")) * (1 if m.group("f") else -1)
+        out = await _tool(j, "browser", {"action": "media", "media_action": "seek", "value": f"{n:+d}"})
+        return _say(j, "Done, sir." if ok(out) else "There's no video here, sir.")
+    if B_FULL.match(t):
+        out = await _tool(j, "browser", {"action": "media", "media_action": "fullscreen"})
+        return _say(j, "Done, sir." if ok(out) else "That needs a click from you, sir.")
+    if m := B_SPEED.match(t):
+        out = await _tool(j, "browser", {"action": "media", "media_action": "speed", "value": m.group("v")})
+        return _say(j, f"Speed {m.group('v')}x, sir." if ok(out) else "There's no video here, sir.")
     if m := B_NAV.match(t):
         act = {"go back": "back", "go forward": "forward"}.get(m.group("a").lower(), "reload")
         return _say(j, "Done, sir." if ok(await _tool(j, "browser", {"action": act})) else "I couldn't, sir.")
@@ -72,6 +103,10 @@ async def _chrome(j, t: str) -> str | None:
         return _say(j, "Done, sir." if ok(await _tool(j, "browser", {"action": "scroll", "direction": (m.group("d") or m.group("e")).lower()})) else "I couldn't, sir.")
     if m := B_KEY.match(t):
         return _say(j, "Done, sir." if ok(await _tool(j, "browser", {"action": "key", "key": m.group("k").capitalize()})) else "I couldn't, sir.")
+    if (m := B_WA_CHAT.match(t)) and "whatsapp" in (bridge.active.get("app") or "").lower() + ("whatsapp" if "whatsapp" in t.lower() else ""):
+        name = (m.group("n") or m.group("n2")).strip()
+        out = await _tool(j, "browser", {"action": "wa_chat", "name": name})
+        return _say(j, f"{name}'s chat is open, sir." if ok(out) else f"I couldn't open {name}'s chat, sir.")
     if m := B_CLOSE_NAMED.match(t):
         out = await _tool(j, "browser", {"action": "close", "tab": m.group("t").strip()})
         return _say(j, f"Closed the {m.group('t').strip()} tab, sir." if ok(out) else f"I can't find a {m.group('t').strip()} tab, sir.")

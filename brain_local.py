@@ -33,8 +33,9 @@ REPORT_NOTE = ("[System note] Report the outcome to sir now, in one short senten
                "results said.")
 WEB_HINT = ("\n[System note: this is an ACTION inside a website, done with his logins. Do NOT use web_search. If any "
             "detail is missing (recipient, exact date, amount, which account), ask ONE short question and wait. "
-            "Otherwise call delegate_to_claude with where=\"chrome\". Irreversible actions need a show_plan with "
-            "needs_approval=true first.]")
+            "Use the browser tool (browser action=context first, then wa_chat/wa_send, click, type with field=…); only if it says the "
+            "extension isn't connected use delegate_to_claude with where=\"chrome\". Sending or posting needs the exact "
+            "recipient and text from him.]")
 
 
 def _text_tool_call(text: str, names: set[str]):
@@ -143,6 +144,8 @@ class LocalBrain:
         if self.llm is None:
             import ollama
             self.llm = ollama.AsyncClient(host=config.OLLAMA_HOST)
+        import ollama_ctl
+        ollama_ctl.mark_used()
         await self._ensure_ollama()
         if not self.warm:                               # free any copy still on the GPU, so the VRAM math is right
             try:
@@ -211,14 +214,20 @@ class LocalBrain:
 
     async def release(self):
         """Switched away: keep the model in memory for a while (fast to switch back), then free the GPU."""
+        if not self.warm:
+            return                                   # this Jarvis never loaded it: nothing of ours to free
         self.unload_task = asyncio.create_task(self._unload_later())
 
     async def _unload_later(self):
         try:
-            await asyncio.sleep(config.LOCAL_KEEP_WARM_MIN * 60)
-            await self.llm.generate(model=config.LOCAL_MODEL, prompt="", keep_alive=0)
-            self.warm, self.stt, self.gpu_layers = False, None, 0   # frees ~15 GB of memory and the GPU
-            log.info("local model unloaded after %d min away", config.LOCAL_KEEP_WARM_MIN)
+            while True:
+                await asyncio.sleep(max(config.LOCAL_KEEP_WARM_MIN, 0) * 60)
+                if not any(j.label.startswith("[OpenCode") for j in self.a.jobs.running()):
+                    break                                          # an OpenCode job is still using the model: wait
+            import ollama_ctl
+            await asyncio.to_thread(ollama_ctl.release)            # unload the model and stop the server
+            self.warm, self.stt, self.tts, self.gpu_layers = False, None, None, 0   # frees ~15 GB of memory and the GPU
+            log.info("local model unloaded and Ollama stopped after %d min away", config.LOCAL_KEEP_WARM_MIN)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -361,6 +370,13 @@ class LocalBrain:
         if not note and (quick := await fastpath.handle(self, content)):
             self._remember(content, quick)
             return
+        if not note:
+            try:
+                from browser_bridge import bridge
+                if (screen := bridge.screen_note()):
+                    content += f"\n[System note: on his screen now: {screen}. Requests about 'this/here/the chat' mean this page.]"
+            except Exception:
+                pass
         if not note and WEB_ACTION.search(content):
             content += WEB_HINT
         self.history.append({"role": "user", "content": content})

@@ -8,6 +8,7 @@ import re
 import time
 
 import config
+import memory
 import screen
 from audio import pick_route
 from daymem import DayMemory
@@ -130,6 +131,10 @@ class Assistant:
         text = text.strip()
         if text and not (self.recent and self.recent[-1] == (role, text)):
             self.recent.append((role, text[:400]))
+            try:
+                memory.add_turn(role, text)          # kept on disk, so it still knows after a restart
+            except Exception:
+                log.exception("memory: could not save the turn")
 
     # ---- switching brains ----------------------------------------------------------------
     def brain_status(self) -> dict:
@@ -458,11 +463,66 @@ class Assistant:
         asyncio.create_task(self._finish_job(job))
 
     async def _finish_job(self, job: Job):
+        try:                                           # keep the whole result: "what did you find?" works hours later
+            kind = "research" if job.label.startswith("Research") else ("browser" if job.kind == "chrome" else "job")
+            rid = await asyncio.to_thread(memory.save_job, kind, job.label, job.result, job.status)
+            if job.status == "done":
+                job.result = job.result + f"\n[stored in memory as #{rid}]"
+        except Exception:
+            log.exception("memory: could not save %s", job.id)
         try:
             await self.routines.on_finished(job)       # routine jobs: save tasks, close the day, show the report
         except Exception:
             log.exception("post-processing %s failed", job.id)
+        if job.label.startswith("[OpenCode"):
+            asyncio.create_task(self._idle_ollama())
         await self.deliver_job(job)
+
+    def _screen_changed(self, note: str):
+        self._screen_note, self._screen_at = note, time.monotonic()
+
+    async def _screen_feeder(self):
+        """Tell the Gemini brain what he is looking at as it changes, silently (no reply), while nobody is talking,
+        so "open Aryan's chat" needs no extra look first. The Qwen brain gets it with each request instead."""
+        self._screen_note, self._screen_at, sent = "", 0.0, ""
+        while True:
+            await asyncio.sleep(0.4)
+            note = self._screen_note
+            if (not note or note == sent or time.monotonic() - self._screen_at < 1.0 or self.active != "gemini"
+                    or not self.connected or self.speaking() or self.awaiting or getattr(self, "heard", False)):
+                continue
+            ctx = getattr(self.brain, "context", None)
+            if not ctx:
+                continue
+            try:
+                await ctx(f"[Screen update, no reply needed] He is now looking at: {note}")
+                sent = note
+            except Exception as e:
+                log.debug("screen note not sent: %s", e)
+
+    async def _memory_keeper(self):
+        """Background housekeeping: tidy once a day, and every half hour let Gemini pull lasting facts and to-dos out of
+        the new conversation. Failures never reach the user."""
+        await asyncio.sleep(45)
+        while True:
+            try:
+                await asyncio.to_thread(memory.tidy)
+                if self.client:
+                    await asyncio.to_thread(memory.embed_pending, self.client)
+                    r = await memory.learn(self.client, config.BRAIN_MODELS)
+                    if r.startswith("learned") and not r.startswith("learned 0 facts and 0"):
+                        log.info("memory: %s", r)
+            except Exception as e:
+                log.warning("memory housekeeping: %s", str(e)[:120])
+            await asyncio.sleep(1800)
+
+    async def _idle_ollama(self):
+        """An OpenCode job ended: if nothing else uses Qwen, unload it and stop the server after a short grace period."""
+        await asyncio.sleep(90)
+        if self.active == "qwen" or any(j.label.startswith("[OpenCode") for j in self.jobs.running()):
+            return
+        import ollama_ctl
+        await asyncio.to_thread(ollama_ctl.release)
 
     # ---- main loop & visual state ----------------------------------------------------
     async def run(self, stop: asyncio.Event):
@@ -471,8 +531,9 @@ class Assistant:
         log.info("brains: %s | starting with %s | echo guard %s (tail %.1fs)", ", ".join(self.brains), first or "none",
                  "on" if self.half_duplex else "off", self.echo_tail)
         from browser_bridge import bridge
+        bridge.on_change = self._screen_changed
         await bridge.start()
-        tasks = [asyncio.create_task(c) for c in (self._ticker(), self._watch_audio_route(), self._narrator())]
+        tasks = [asyncio.create_task(c) for c in (self._ticker(), self._watch_audio_route(), self._narrator(), self._memory_keeper(), self._screen_feeder())]
         self.send_engine()
         if not first:
             self.ui.send(type="notice", text="No brain available: add GEMINI_API_KEY or install the local model.")
