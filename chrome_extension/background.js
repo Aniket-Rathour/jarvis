@@ -5,7 +5,7 @@
 //    last resort when a page ignores them, and is released at once
 //  - looks inside iframes and shadow DOM, notices new tabs a click opens, waits for slow pages
 const WS_URL = "ws://127.0.0.1:8765";
-const LIB_V = 7;
+const LIB_V = 8;
 let ws = null, connected = false;
 
 // ---------------------------------------------------------------- connection
@@ -120,6 +120,10 @@ chrome.tabs.onCreated.addListener((t) => { lastOpened = { id: t.id, opener: t.op
 // ---------------------------------------------------------------- helpers
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function callTabs() {
+  return (await chrome.tabs.query({})).filter((t) => /^https:\/\/(web\.whatsapp\.com|meet\.google\.com)\//.test(t.url || ""));
+}
+
 async function activeTab() {
   let w; try { w = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }); } catch { /* none */ }
   const [t] = await chrome.tabs.query(w ? { active: true, windowId: w.id } : { active: true, lastFocusedWindow: true });
@@ -176,7 +180,7 @@ async function execIn(tabId, frameId, name, args) {
   const call = () => chrome.scripting.executeScript({
     target, args: [name, args, frameId || 0],
     func: async (n, a, fid) => {
-      if (!(window.__jv && window.__jv.v === 7)) return "__NOLIB__";
+      if (!(window.__jv && window.__jv.v === 8)) return "__NOLIB__";
       window.__jv.fid = fid;
       return await window.__jv[n](...a);
     },
@@ -550,6 +554,47 @@ async function run(m) {
         catch (e) { out.push(`${out.length + 1}. ${cmd} FAILED: ${e.message} (stopped here)`); break; }
       }
       return out.join("\n");
+    }
+    // ------------------------------------------------ calls
+    case "call_state": {   // looks at every WhatsApp / Meet tab and reports the most advanced call state
+      const rank = { none: 0, ended: 1, prejoin: 2, incoming: 3, ringing: 4, in_call: 5 };
+      let best = null;
+      for (const t of await callTabs()) {
+        try { const r = await inPage(t, "callState"); if (r && r.phase && (!best || rank[r.phase] > rank[best.phase])) best = { ...r, tab: t.id }; } catch { /* not injectable */ }
+      }
+      return best ? `phase: ${best.phase}; mic: ${best.mic}; platform: ${best.platform}; tab: ${best.tab}${best.buttons ? "; buttons: " + best.buttons : ""}` : "phase: none";
+    }
+    case "call_start": {
+      const t = (await chrome.tabs.query({ url: "https://web.whatsapp.com/*" }))[0];
+      if (!t) throw new Error("WhatsApp Web isn't open");
+      const r = await inPage(t, "callStart");
+      if (!r || !r.ok) throw new Error(r && r.err || "couldn't start the call");
+      return "call started";
+    }
+    case "call_answer": case "call_end": case "call_mic": {
+      const fn = { call_answer: "callAnswer", call_end: "callEnd", call_mic: "callMic" }[m.cmd];
+      let done = "", err = "";
+      for (const t of await callTabs()) {
+        try { const r = await inPage(t, fn, m.cmd === "call_mic" ? [m.on !== false] : []); if (r && r.ok) { done = r.mic ? `mic ${r.mic}` : m.cmd.replace("call_", "") + " done"; break; } err = r && r.err || err; } catch { /* skip */ }
+      }
+      if (!done) throw new Error(err || "no call page found");
+      return done;
+    }
+    case "meet_join": {
+      let code = String(m.url || "").trim();
+      if (/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(code)) code = "https://meet.google.com/" + code;
+      if (!/^https:\/\/meet\.google\.com\//.test(code)) throw new Error("that isn't a Google Meet link or code");
+      const t = await chrome.tabs.create({ url: code, active: true });
+      await ready(t);
+      let last = "the Join button never appeared";
+      for (let i = 0; i < 30; i++) {
+        const cur = await chrome.tabs.get(t.id);
+        let r = null; try { r = await inPage(cur, "meetJoin", [`Jarvis (${m.owner || "assistant"})`]); } catch { /* still loading */ }
+        if (r && r.ok) return r.state;
+        if (r && r.err) last = r.err;
+        await sleep(1000);
+      }
+      throw new Error(last);
     }
     case "wait": await sleep(Math.min(m.ms || 1000, 10000)); return "waited";
     default: throw new Error("unknown command " + m.cmd);
