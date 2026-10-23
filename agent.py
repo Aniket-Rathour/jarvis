@@ -26,7 +26,7 @@ def setup_logging():
         console.setFormatter(fmt)
         handlers.append(console)
     logging.basicConfig(level=logging.INFO, handlers=handlers)
-    for noisy in ("httpx", "httpcore", "google_genai", "google_genai.types"):
+    for noisy in ("httpx", "httpcore", "google_genai", "google_genai.types", "phonemizer", "faster_whisper"):
         logging.getLogger(noisy).setLevel(logging.ERROR)
     logging.getLogger("websockets").setLevel(logging.CRITICAL)   # Chrome opens empty preconnect sockets
 

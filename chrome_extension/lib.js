@@ -1,7 +1,7 @@
 // Page-side toolkit injected by Jarvis Hands (window.__jv). Plain DOM events, no debugger bar needed.
 // Works through open shadow roots; background.js runs it inside iframes too (J.fid = frame id).
 (() => {
-  const V = 10;
+  const V = 11;
   if (window.__jv && window.__jv.v === V) return;
   const J = (window.__jv = { v: V, n: (window.__jv && window.__jv.n) || 0, fid: (window.__jv && window.__jv.fid) || 0 });
 
@@ -63,7 +63,12 @@
     if (t === "VIDEO" || t === "AUDIO") return t.toLowerCase();
     return e.getAttribute("role") || (e.isContentEditable ? "editor" : t.toLowerCase());
   };
-  const tag = (e) => { if (!e.dataset.jv) { J.n++; e.dataset.jv = J.fid ? `f${J.fid}_${J.n}` : String(J.n); } return e.dataset.jv; };
+  J.refs = J.refs || {};                                     // ref -> what it was, to find it again after the page re-renders
+  const tag = (e) => {
+    if (!e.dataset.jv) { J.n++; e.dataset.jv = J.fid ? `f${J.fid}_${J.n}` : String(J.n); }
+    J.refs[e.dataset.jv] = { label: label(e), kind: kindOf(e) };
+    return e.dataset.jv;
+  };
   const describe = (e) => `${kindOf(e)} "${label(e)}"`;
   const state = (e) => {
     const x = [];
@@ -135,7 +140,15 @@
     }
     return best;
   };
-  const byRef = (ref) => { const e = deep(`[data-jv="${CSS.escape(String(ref))}"]`)[0]; return e && e.isConnected ? e : null; };
+  const byRef = (ref) => {
+    const e = deep(`[data-jv="${CSS.escape(String(ref))}"]`)[0];
+    if (e && e.isConnected) return e;
+    const was = J.refs[String(ref)];                           // the page re-rendered and dropped our mark: find the same thing again
+    if (!was || !was.label) return null;
+    const f = J.find({ text: was.label, kind: was.kind.split(":")[0] });
+    if (f.el) tag(f.el);
+    return f.el || null;
+  };
 
   J.find = (spec) => {
     if (spec.ref) return { el: byRef(spec.ref), count: 1 };

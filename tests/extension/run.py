@@ -66,6 +66,7 @@ SCENARIO = [
     ("forward", "forward", {}, "went forward"),
     ("complex page", "open", {"url": "https://complex.local/", "new": True}, "Complex"),
     ("sees the selection", "selected", {}, "Select this sentence"),
+    ("scroll without an amount (used to crash)", "scroll", {"direction": "down"}, "scrolled down"),
     ("inside shadow DOM", "click", {"text": "Shadow Btn"}, 'button "Shadow Btn"'),
     ("inside an iframe", "click", {"text": "Frame Button"}, "Frame clicked"),
     ("nth match", "click", {"text": "Reply", "nth": 2}, "Replied B"),
@@ -101,7 +102,18 @@ async def main() -> int:
             ok = out.startswith("error") and want[4:] in out if want.startswith("ERR:") else (not out.startswith("error") and want in out)
             failed += not ok
             print(f"{'PASS' if ok else 'FAIL'} {ms:6.0f} ms  {label}" + ("" if ok else f"\n      expected {want!r}\n      got {out[:200]!r}"))
-        print(f"\n{len(SCENARIO) - failed}/{len(SCENARIO)} passed in {time.time() - t_all:.1f}s")
+        # an element number must still work after the page re-rendered that element (SPAs do this all the time)
+        await bridge.call("open", url="https://complex.local/", new=True)
+        snap = await bridge.call("read")
+        import re
+        m = re.search(r'\[(\d+)\] button "Target"', snap)
+        await bridge.call("click", text="Rebuild list")
+        out = await bridge.call("click", ref=m.group(1)) if m else "error: no ref in read"
+        ok = not out.startswith("error") and "Target" in out
+        failed += not ok
+        print(f"{'PASS' if ok else 'FAIL'}          click by number after the page re-rendered it" + ("" if ok else f"  got {out[:150]!r}"))
+        total = len(SCENARIO) + 1
+        print(f"\n{total - failed}/{total} passed in {time.time() - t_all:.1f}s")
     return 1 if failed else 0
 
 

@@ -19,6 +19,7 @@ class MyEl extends HTMLElement{constructor(){super();const s=this.attachShadow({
 customElements.define('my-el',MyEl);
 const r=document.createRange();r.selectNodeContents(document.getElementById('txt'));getSelection().addRange(r);
 </script>
+<div id=rbox><button id=tg onclick="document.title='target clicked'">Target</button></div> <button id=rr onclick="rbox.innerHTML='<button onclick=&quot;document.title=\'target clicked\'&quot;>Target</button>'">Rebuild list</button>
 <my-el></my-el><br><iframe src="/frame.html" width=300 height=100 id=fr></iframe>
 <div contenteditable=true id=ce aria-label="Notes editor" style="border:1px solid #888;min-height:30px"></div>
 <canvas id=cv width=64 height=64></canvas><video id=vid muted style="width:120px"></video>
