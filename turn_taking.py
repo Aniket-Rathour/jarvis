@@ -56,6 +56,8 @@ def classify(text: str) -> str:
     if not words:
         return "neutral"
     last = words[-1]
+    if len(words) >= 3 and all(len(w) == 1 for w in words[-3:]):     # spelling something out ("c-h-u-t-i-y-a"): judge by timing
+        return "neutral"
     if t.rstrip().endswith("?"):
         return "complete"
     if t.rstrip().endswith(("...", "…", ",", "-")):

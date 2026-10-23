@@ -6,6 +6,7 @@
   turns     the conversation log (oldest are pruned first when the file passes MEMORY_MAX_MB)
   focus     what he was last doing: current site/chat/project (so "open Aryan's chat" means the open WhatsApp)
 Search uses SQLite FTS5 (like grep, but ranked) with a LIKE fallback."""
+import asyncio
 import datetime
 import os
 import re
@@ -449,10 +450,35 @@ def semantic_recall(client, query: str, k: int = 6, floor: float = 0.62) -> list
 # ---------------------------------------------------------------- learning from conversation
 LEARN_PROMPT = ("Below is a conversation between a user and his voice assistant Jarvis. Extract ONLY durable things worth "
                 "remembering long-term: facts about the user, people in his life and their relation, preferences, plans and "
-                "commitments, important decisions, and tasks he still needs to do. Ignore one-off commands (open X, volume, "
-                "time), small talk, and anything about the assistant. NEVER include passwords, card or bank numbers, OTPs or keys. "
+                "commitments, and important decisions. Ignore one-off commands (open X, volume, time), small talk, what is on "
+                "his screen right now, and anything about the assistant. NEVER include passwords, card or bank numbers, OTPs or keys.\n"
+                "Facts: only NEW information. Do not repeat or rephrase anything in ALREADY KNOWN; if a fact only adds a detail to a "
+                "known one, write one combined sentence with the new detail. Write each fact as one clear, specific sentence.\n"
+                "To-dos: only tasks HE says he still has to do later, stated clearly ('I need to...', 'remind me to...', 'I have to...'). "
+                "Not things done during this conversation, not things Jarvis did or will do, not vague ones like 'attend meeting' "
+                "without what/when, and nothing already on HIS TO-DO LIST. Write each to-do as a short command ('Renew passport'), "
+                "and put any deadline he gave into due (e.g. '2026-12-10', 'friday', 'tomorrow').\n"
                 'Reply with JSON only: {"facts": ["full sentence", ...], "todos": [{"text": "...", "due": "today|tomorrow|friday|'
                 '2026-11-02|"}]}. Use empty lists if nothing qualifies.\n\nCONVERSATION:\n')
+
+
+def _new_only(client, items: list[str], existing: list[str], same: float = 0.86) -> list[str]:
+    """Drop items whose meaning is already in `existing` (or repeated within `items`), using embeddings."""
+    if not items:
+        return []
+    try:
+        new = _embed(client, items, "SEMANTIC_SIMILARITY")
+        old = _embed(client, existing, "SEMANTIC_SIMILARITY") if existing else None
+    except Exception:
+        return items                                   # no embeddings (offline): keep, the prompt already filtered
+    keep, kept_vecs = [], []
+    for text, v in zip(items, new):
+        if old is not None and float((old @ v).max()) >= same:
+            continue
+        if kept_vecs and max(float(k @ v) for k in kept_vecs) >= same:
+            continue
+        keep.append(text); kept_vecs.append(v)
+    return keep
 
 
 async def learn(client, models: list[str]) -> str:
@@ -466,18 +492,28 @@ async def learn(client, models: list[str]) -> str:
     if sum(1 for r in rows if r["role"] == "user") < 6:
         return "not enough new conversation yet"
     convo = "\n".join(f"{'User' if r['role'] == 'user' else 'Jarvis'}: {r['text'][:300]}" for r in rows)
+    with _lock:
+        known = [r["text"] for r in _conn().execute("SELECT text FROM notes ORDER BY ts DESC LIMIT 60")]
+    todo_now = [r["text"] for r in todo_rows("open")][:40]
+    context = ("ALREADY KNOWN:\n" + ("\n".join(f"- {k}" for k in known) or "- (nothing)") +
+               "\n\nHIS TO-DO LIST:\n" + ("\n".join(f"- {t}" for t in todo_now) or "- (empty)") + "\n\n")
     cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
-    _model, text = await hedged(client, list(models), LEARN_PROMPT + convo, cfg, hedge_s=8)
+    _model, text = await hedged(client, list(models), LEARN_PROMPT + context + "CONVERSATION:\n" + convo, cfg, hedge_s=8)
     try:
         data = json.loads(text)
     except ValueError:
         return "could not parse the answer"
     facts = [f for f in data.get("facts", []) if isinstance(f, str) and 8 < len(f) < 300]
-    todos = [t for t in data.get("todos", []) if isinstance(t, dict) and t.get("text")]
+    todos = [t for t in data.get("todos", []) if isinstance(t, dict) and t.get("text") and len(str(t["text"]).split()) >= 2]
+    # second line of defence against near-duplicates: compare meanings with what is already stored
+    facts = await asyncio.to_thread(_new_only, client, facts, known)
+    todo_texts = await asyncio.to_thread(_new_only, client, [str(t["text"]) for t in todos], todo_now)
     for f in facts:
         remember(f, "fact", "auto")
     for t in todos:
-        todo_add([t["text"]], "conversation", t.get("due") or "")
+        if str(t["text"]) in todo_texts:
+            todo_add([t["text"]], "conversation", t.get("due") or "")
+    todos = [t for t in todos if str(t["text"]) in todo_texts]
     with _lock:
         _set_meta("learned_turn", str(rows[-1]["id"]))
     return f"learned {len(facts)} facts and {len(todos)} to-dos"
