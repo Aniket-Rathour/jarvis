@@ -71,6 +71,14 @@ Claude jobs, plans, today's memory, the cursor. The choice is remembered for the
 After a switch away, Qwen stays in memory for `LOCAL_KEEP_WARM_MIN` minutes so switching back is quick, then the GPU
 is freed. Screen vision, pointing, `ask_gemini` and research still use your Gemini key from either brain.
 
+## Qwen: fast voice model + big coding model
+
+The voice brain runs **`qwen3:8b`**, which fits entirely on the 8 GB GPU: about 40 tokens/s, a tool call in under a
+second (the 27B managed 2-3 tokens/s because two thirds of it ran on the CPU). Memory, to-do and quick Chrome commands
+are answered by code with no model at all. The 27B (`qwen3.8-oc`) stays for **OpenCode coding jobs**, where quality
+matters more than speed. Qwen only sees a compact 24-tool list (~2,000 tokens), because its context window is small.
+Set `LOCAL_MODEL=` to change the voice model. Compare models: `.venv/bin/python tests/bench_local.py MODEL [gpu_layers]`.
+
 ## Qwen runs only when needed
 
 Ollama is no longer a background service (disabled at login). It starts when you switch to Qwen or give OpenCode a
