@@ -54,6 +54,11 @@ B_BOOKMARK = re.compile(rf"^{_P}(?:bookmark|save) {THIS}(?:page|tab|site)(?: as 
 B_SEEK = re.compile(rf"^{_P}(?:(?P<f>skip|forward|go forward|fast forward)(?: ahead)?|(?P<b>rewind|go back|back|skip back)) (?P<n>\d+) ?(?:seconds?|secs?|s)[.!?]*$", re.I)
 B_FULL = re.compile(rf"^{_P}(?:full ?screen|exit full ?screen|go full ?screen)(?: the video)?[.!?]*$", re.I)
 B_SPEED = re.compile(rf"^{_P}(?:set )?(?:the )?(?:playback )?speed (?:to )?(?P<v>\d+(?:\.\d+)?)x?[.!?]*$", re.I)
+M_REMEMBER = re.compile(rf"^{_P}(?:remember|note|make a note|keep in mind|don'?t forget)(?: that)? (?P<f>.{{6,}}?)[.!]*$", re.I)
+M_FORGET = re.compile(rf"^{_P}forget (?:that |about )?(?P<f>.{{3,}}?)[.!]*$", re.I)
+T_ADD = re.compile(rf"^{_P}(?:add|put|put down|note down) (?P<x>.+?) (?:to|on|in) (?:my |the )?(?:to-?do|todo|task)s?(?: list)?(?: (?:for|by|due|before|on) (?P<d>.+?))?[.!]*$", re.I)
+T_LIST = re.compile(rf"^{_P}(?:what(?:'s| is| are)(?: on| in)? my (?:to-?do|todo|task)s?(?: list)?|(?:read|show|list|tell me) (?:me )?my (?:to-?do|todo|task)s?(?: list)?|what do i (?:have|need) to do)(?: (?:for |due )?(?P<w>today|this week|overdue))?[.?!]*$", re.I)
+T_DONE = re.compile(rf"^{_P}(?:mark|tick|check off|cross off|remove) (?P<x>.+?) (?:as )?(?:done|complete|completed|finished|off)(?: (?:in|on|from) my (?:to-?do|todo)(?: list)?)?[.!]*$|^{_P}(?:mark|tick|check off|cross off) off (?P<x2>.+?)(?: (?:in|on|from) my (?:to-?do|todo)(?: list)?)?[.!]*$", re.I)
 B_KEY = re.compile(rf"^{_P}press (?:the )?(?P<k>enter|escape|tab|backspace|space)(?: key)?[.!?]*$", re.I)
 OPENCODE = re.compile(rf"^{_P}(?:use |ask |tell |let |get )?open ?code(?: to| and)? (?P<task>.{{6,}}?)[.!?]*$|"
                       rf"^{_P}(?P<task2>(?:code|build|write|create|fix|refactor|make|add).{{6,}}?) (?:with|using|in|on) (?:open ?code|qwen)[.!?]*$", re.I)
@@ -130,8 +135,36 @@ async def _chrome(j, t: str) -> str | None:
     return None
 
 
+async def _memory_cmds(j, t: str) -> str | None:
+    """Memory and to-dos are answered by code: instant, and the model can't claim it saved something it didn't."""
+    if (m := T_ADD.match(t)):
+        args = {"action": "add", "items": [m.group("x").strip()], "source": "voice"}
+        if m.group("d"):
+            args["due"] = m.group("d").strip()
+        out = await _tool(j, "todo", args)
+        return _say(j, f"Added to your list, sir. {out.split('; ')[-1]}." if out.startswith("added 1") else "That was already on your list, sir.")
+    if (m := T_LIST.match(t)):
+        out = await _tool(j, "todo", {"action": "list", "when": {"today": "today", "this week": "week", "overdue": "overdue"}.get((m.group("w") or "").lower(), "all")})
+        if out.startswith(("the to-do list is empty", "nothing")):
+            return _say(j, "Your list is clear, sir.")
+        items = [re.sub(r"^\d+\. \[open\] ", "", ln).replace(" (from conversation)", "") for ln in out.splitlines()]
+        return _say(j, f"You have {len(items)}, sir: " + "; ".join(items[:6]) + (f"; and {len(items) - 6} more" if len(items) > 6 else "") + ".")
+    if (m := T_DONE.match(t)):
+        out = await _tool(j, "todo", {"action": "done", "match": (m.group("x") or m.group("x2")).strip()})
+        return _say(j, "Ticked off, sir." if out.startswith("marked done") else "I can't find that on your list, sir.")
+    if (m := M_FORGET.match(t)):
+        out = await _tool(j, "forget", {"match": m.group("f").strip()})
+        return _say(j, "Forgotten, sir." if out.startswith("forgot") and "forgot 0" not in out else "I had nothing like that, sir.")
+    if (m := M_REMEMBER.match(t)):
+        out = await _tool(j, "remember", {"text": m.group("f").strip()})
+        return _say(j, "I'll remember that, sir." if out in ("remembered", "already remembered") else "I couldn't save that, sir.")
+    return None
+
+
 async def handle(j, text: str) -> str | None:
     t = text.strip()
+    if quick := await _memory_cmds(j, t):
+        return quick
     if m := OPENCODE.match(t):
         task = (m.group("task") or m.group("task2")).strip()
         out = await j.run_tool("delegate_to_opencode", {"task": task}, SimpleNamespace(id=None, name="delegate_to_opencode"))

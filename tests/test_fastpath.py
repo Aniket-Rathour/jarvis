@@ -13,13 +13,17 @@ CASES = {
     "go back 30 seconds": "B_SEEK", "fullscreen": "B_FULL", "speed 1.5": "B_SPEED", "open Aryan's chat": "B_WA_CHAT",
     "open chat with Mom": "B_WA_CHAT", "type hello in the search box and press enter": "B_TYPE",
     "use opencode to add a login page to my flask app": "OPENCODE",
+    "remember that my favourite editor is Neovim": "M_REMEMBER", "forget about the neovim thing": "M_FORGET",
+    "add buy milk to my to-do list for tomorrow": "T_ADD", "put call Rahul on my todo list": "T_ADD",
+    "what's on my to-do list": "T_LIST", "what are my tasks for today": "T_LIST", "mark buy milk as done": "T_DONE",
+    "tick off buy milk": "T_DONE",
 }
 bad = []
 for text, want in CASES.items():
     if not getattr(f, want).match(text):
         bad.append(f"{text!r} should match {want}")
-for text in ("open my youtube", "what is the time", "tell me a joke"):
-    if f.B_WA_CHAT.match(text) or f.B_CLICK.match(text):
+for text in ("open my youtube", "what is the time", "tell me a joke", "remember"):
+    if f.B_WA_CHAT.match(text) or f.B_CLICK.match(text) or f.M_REMEMBER.match(text):
         bad.append(f"{text!r} must not be a Chrome command")
 assert not bad, "\n".join(bad)
 print(f"fastpath: all {len(CASES)} patterns passed")

@@ -3,7 +3,7 @@
 # Speech models (Whisper, Kokoro) are fetched by the Python side on first use.
 set -euo pipefail
 VER="${OLLAMA_VERSION:-v0.40.8}"
-MODEL="${LOCAL_MODEL:-qwen3.8:27b}"
+MODEL="${LOCAL_MODEL:-qwen3:8b}"
 OPT="$HOME/.local/opt/ollama"
 if [ ! -x "$OPT/bin/ollama" ]; then
   echo "==> downloading Ollama $VER"

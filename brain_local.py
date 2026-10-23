@@ -205,12 +205,32 @@ class LocalBrain:
         except (OSError, ValueError, IndexError, subprocess.SubprocessError):
             return None
 
+    def _model_shape(self) -> tuple[float, int] | None:
+        """(weights in MiB, transformer layers) of the local model, from Ollama itself."""
+        try:
+            req = urllib.request.Request(config.OLLAMA_HOST + "/api/show", method="POST",
+                                         data=json.dumps({"model": config.LOCAL_MODEL}).encode())
+            info = json.load(urllib.request.urlopen(req, timeout=5))
+            layers = next(int(v) for k, v in info.get("model_info", {}).items() if k.endswith(".block_count"))
+            tags = json.load(urllib.request.urlopen(config.OLLAMA_HOST + "/api/tags", timeout=3))
+            size = next(m["size"] for m in tags["models"] if m["name"] in (config.LOCAL_MODEL, config.LOCAL_MODEL + ":latest"))
+            return size / 2**20, layers
+        except (OSError, ValueError, StopIteration, KeyError):
+            return None
+
     def _pick_gpu_layers(self) -> int:
-        """Layers that fit in the VRAM left after Whisper: ~270 MiB per layer, ~1100 MiB kept free for buffers/Chrome."""
+        """How many layers fit in the VRAM left after Whisper: the model's real size per layer, ~900 MiB kept free for
+        buffers/Chrome and ~500 MiB for the context. A small model that fits is placed entirely on the GPU."""
         if config.LOCAL_GPU_LAYERS.isdigit():
             return int(config.LOCAL_GPU_LAYERS)
         free = self._free_vram_mib()
-        return max(0, min(64, int((free - 1100) / 270))) if free else 0      # leaves room for Chrome's GPU use
+        if not free:
+            return 0
+        shape = self._model_shape()
+        if shape:
+            size, layers = shape
+            return max(0, min(layers + 1, int((free - 1400) / (size / layers))))
+        return max(0, min(64, int((free - 1100) / 270)))          # unknown model: assume a 27B-sized layer
 
     async def release(self):
         """Switched away: keep the model in memory for a while (fast to switch back), then free the GPU."""

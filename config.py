@@ -23,8 +23,9 @@ BRAIN = _env("BRAIN", "auto").lower()
 
 # ---- Qwen brain: runs on this PC (Ollama + Whisper + Kokoro), no internet needed ----
 OLLAMA_HOST = _env("OLLAMA_HOST", "http://127.0.0.1:11434")
-# same model as OpenCode uses (qwen3.8:27b with a 16k default context): one copy in memory, never two on the 8 GB GPU
-LOCAL_MODEL = _env("LOCAL_MODEL", "qwen3.8-oc")
+# Voice brain: qwen3:8b fits entirely on the 8 GB GPU (~40 tokens/s, a tool call in under a second). The 27B
+# (qwen3.8-oc) is smarter but runs mostly on the CPU (~2.5 tokens/s), so it is used for OpenCode coding jobs instead.
+LOCAL_MODEL = _env("LOCAL_MODEL", "qwen3:8b")
 LOCAL_CTX = int(_env("LOCAL_CTX", "8192"))                  # context window; smaller = faster and lighter
 # GPU layers for Qwen: auto = chosen from the VRAM left after the speech model loads (more layers = faster, but
 # too many runs out of memory), or a fixed number such as 20
