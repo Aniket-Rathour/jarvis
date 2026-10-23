@@ -16,6 +16,7 @@ from google.genai import types
 import browser_bridge
 import call_audio
 import config
+from turn_taking import Recogniser, TurnTaker
 import memory
 from audio import IN_RATE
 
@@ -28,8 +29,16 @@ YOUR MISSION (the only reason you are on this call): {mission}
 {who_line}
 HOW TO SPEAK
 - {opening}
-- Be brief and natural: one or two short sentences, then stop and listen. Plain words, polite and warm, no lists.
-- If the other person starts speaking, stop immediately and listen. Answer what they actually said.
+- Talk like a friendly, natural person on the phone: short sentences, contractions, one idea at a time. Briefly acknowledge
+  what they said before moving on ("Got it.", "Sure.", "Ah, okay.").
+- Ask ONE question at a time, then stop and wait for the answer.
+- Read important details back in a few words so nothing is misheard ("Friday at five, got it.").
+- If you didn't catch something, or it sounds garbled, ask them to repeat ("Sorry, could you say that again?"). Never guess a
+  name, number, time or place.
+- If they say "hold on", "one second", "let me check": say "Sure, take your time." and call hold, then stay silent.
+- If they can't hear you ("Hello? Hello?"), say "Can you hear me now?" once, then repeat your last point slowly.
+- Greet only once. Use their first name now and then, not in every sentence.
+- You only get their turn once they have really finished speaking, so answer what they said, completely.
 - Speak English by default. Switch to Hindi only if the person clearly speaks Hindi in full sentences; one odd or garbled
   word is just noise, so ignore it and keep going in English.
 
@@ -53,6 +62,9 @@ TOOLS = [types.Tool(function_declarations=[
                                   required=["summary"])),
     types.FunctionDeclaration(name="ask_owner", description="Ask the owner a question you cannot answer yourself; he replies live.",
                               parameters=types.Schema(type="OBJECT", properties={"question": types.Schema(type="STRING")}, required=["question"])),
+    types.FunctionDeclaration(name="hold", description="They asked you to wait ('hold on', 'one second', 'let me check'): stay "
+                              "silent and don't prompt them for this many seconds.",
+                              parameters=types.Schema(type="OBJECT", properties={"seconds": types.Schema(type="INTEGER")})),
     types.FunctionDeclaration(name="note", description="Record one fact from the call (time, name, answer).",
                               parameters=types.Schema(type="OBJECT", properties={"text": types.Schema(type="STRING")}, required=["text"])),
 ])]
@@ -76,7 +88,10 @@ class CallAgent:
         self._buf = {"them": "", "jarvis": ""}
         self.last_activity = time.monotonic()
         self.audible_until = 0.0
-        self.deaf_until = 0.0                             # ignore the first moments of audio (connect chimes, ring tail)                          # call audio is playing on his speakers until this moment
+        self.deaf_until = 0.0                             # ignore the first moments of audio (connect chimes, ring tail)
+        self.turns = TurnTaker(Recogniser.shared())
+        self.drop_audio = False                           # after an interruption: discard the rest of the cut-off sentence
+        self.hold_until = 0.0                             # they asked Jarvis to wait ("hold on"): no nudging until then                          # call audio is playing on his speakers until this moment
         self._tasks: list[asyncio.Task] = []
 
     # ---- prompt ------------------------------------------------------------------------------
@@ -108,8 +123,8 @@ class CallAgent:
             input_audio_transcription=types.AudioTranscriptionConfig(language_codes=["en-IN", "hi-IN", "en-US"]),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=config.VOICE))),
-            realtime_input_config=types.RealtimeInputConfig(automatic_activity_detection=types.AutomaticActivityDetection(
-                prefix_padding_ms=200, silence_duration_ms=550)),
+            # turns are decided here (turn_taking.py), not by Gemini's fixed 0.5 s silence rule: people pause mid-thought
+            realtime_input_config=types.RealtimeInputConfig(automatic_activity_detection=types.AutomaticActivityDetection(disabled=True)),
             context_window_compression=types.ContextWindowCompressionConfig(sliding_window=types.SlidingWindow()))
         try:
             async with a.client.aio.live.connect(model=config.LIVE_MODEL, config=cfg) as session:
@@ -177,7 +192,11 @@ class CallAgent:
 
     # ---- owner controls --------------------------------------------------------------------------
     async def inject(self, text: str):
-        """The owner tells the agent something live."""
+        """The owner tells the agent something live. Delivered at the next natural gap (not while the other person is
+        talking or Jarvis is mid-sentence), so Jarvis never talks over anyone to pass it on."""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 12 and self.session and (self.turns.in_turn or (self.mouth and self.mouth.speaking)):
+            await asyncio.sleep(0.1)
         if self.session:
             await self.session.send_realtime_input(text=f"[{config.USER_NAME} says] {text}")
 
@@ -189,7 +208,14 @@ class CallAgent:
         self.audio.hand_mic_to_owner(on)
 
     # ---- loops ---------------------------------------------------------------------------------------
+    async def _send_audio(self, pcm: bytes):
+        for i in range(0, len(pcm), 1280):                # 40 ms pieces, as the stream expects
+            await self.session.send_realtime_input(audio=types.Blob(data=pcm[i:i + 1280], mime_type=f"audio/pcm;rate={IN_RATE}"))
+
     async def _listen(self):
+        """Hear the call frame by frame; turn_taking.TurnTaker decides when their turn starts and really ends (so a pause
+        mid-thought isn't taken as the end), and whether talking over Jarvis is an interruption or just an "mm-hm"."""
+        tk = self.turns
         while True:
             pcm = await asyncio.to_thread(self.ear.read, 40)
             if not pcm:
@@ -199,9 +225,28 @@ class CallAgent:
             self.peak_heard = max(self.peak_heard, int(rms))
             if rms > 250:                                                                  # the caller is audibly speaking
                 self.audible_until = time.monotonic() + 0.9
+                self._heard()
             if self.paused or not self.session or time.monotonic() < self.deaf_until:
                 continue
-            await self.session.send_realtime_input(audio=types.Blob(data=pcm, mime_type=f"audio/pcm;rate={IN_RATE}"))
+            events = tk.on_frame(pcm, jarvis_speaking=bool(self.mouth and self.mouth.speaking))
+            for e in events:
+                if e == "duck":
+                    self.mouth.hold(True)                                                  # pause mid-word, keep the rest
+                elif e == "unduck":
+                    self.mouth.hold(False)                                                 # only an "mm-hm": carry on
+                elif e == "barge":
+                    log.info("call: interrupted by the other person; dropping the rest of what I was saying")
+                    self.mouth.clear(); self.mouth.hold(False)
+                    self.drop_audio = True
+                    self._flush("jarvis")
+                elif e == "start":
+                    await self.session.send_realtime_input(activity_start=types.ActivityStart())
+                    await self._send_audio(bytes(tk.utterance))                           # the preroll: no clipped first word
+                elif e == "audio" and "start" not in events:
+                    await self._send_audio(pcm)
+                elif e == "end":
+                    await self.session.send_realtime_input(activity_end=types.ActivityEnd())
+                    self.drop_audio = False                                                # the next reply is a fresh one
 
     def _heard(self):
         self.last_activity = time.monotonic()
@@ -235,7 +280,7 @@ class CallAgent:
                     if sc.output_transcription and sc.output_transcription.text:
                         self._flush("them")
                         self._buf["jarvis"] += sc.output_transcription.text
-                    if sc.model_turn and sc.model_turn.parts and not self.paused:
+                    if sc.model_turn and sc.model_turn.parts and not self.paused and not self.drop_audio:
                         for p in sc.model_turn.parts:
                             if p.inline_data and p.inline_data.data and not p.thought and self.mouth:
                                 self.mouth.write(p.inline_data.data)
@@ -252,7 +297,11 @@ class CallAgent:
         replies = []
         for fc in tool_call.function_calls:
             args = dict(fc.args or {})
-            if fc.name == "note":
+            if fc.name == "hold":
+                secs = max(10, min(int(args.get("seconds") or 60), 300))
+                self.hold_until = time.monotonic() + secs
+                out = f"waiting quietly for up to {secs} s; speak again when they come back"
+            elif fc.name == "note":
                 self.notes.append(str(args.get("text", ""))[:300]); out = "noted"
             elif fc.name == "ask_owner":
                 q = str(args.get("question", ""))[:300]
@@ -291,7 +340,8 @@ class CallAgent:
             quiet = time.monotonic() - self.last_activity
             if quiet < 3:
                 nudges = 0
-            elif not self.paused and self.session and len(self.transcript) >= 2 and quiet > 8 + 7 * nudges:
+            elif (not self.paused and self.session and len(self.transcript) >= 2 and quiet > 8 + 7 * nudges
+                  and not self.turns.in_turn and time.monotonic() > self.hold_until):
                 if nudges >= 2 and quiet > 30:                                   # nobody has said anything for a while: wrap up
                     self.end(self.summary or "The conversation went quiet, so I ended the call."); return
                 msg = ("[System: it has been quiet for a few seconds. If you asked a question and got no answer, say a short 'Are you "
@@ -303,8 +353,8 @@ class CallAgent:
                 await self.session.send_realtime_input(text=msg)
             out = await bridge.call("call_state", timeout=8, **self.scope)
             gone = gone + 1 if ("phase: ended" in out or "phase: none" in out or out.startswith("error")) else 0
-            if gone >= 3:
-                self.end(); return
+            if gone >= 2:                                          # they hung up (checked every 2 s)
+                self.end(self.summary or "The other person hung up."); return
 
 
 def parse_state(out: str) -> dict:
@@ -382,6 +432,7 @@ class CallManager:
         except Exception:
             pass
         self.audio = call_audio.CallAudio(loop_to_speakers=True)            # he hears both sides of the call live
+        Recogniser.shared()                                                  # load the turn-taking recogniser while it rings
         self.state = "starting"
         self.task = asyncio.create_task(self._run(platform, who, mission, url, speakers, incoming, mode))
         what = {"attach": "Taking over the call that is already running", "join": f"Joining the call in {who or 'the open chat'}"}.get(
