@@ -38,7 +38,8 @@ kyonki ya phir fir wala wali bhi hi ek और लेकिन पर तो क�
 # endings of two or three words that leave the thought open ("...so I was thinking.", "...the thing is.")
 INCOMPLETE_TAIL = {"you know", "i mean", "the thing", "thing is", "i think", "i guess", "i feel", "i believe", "i was",
                    "what i", "the problem", "problem is", "the point", "point is", "let me", "let's see", "i wanted", "i want",
-                   "me see", "as in", "i'd say", "i would", "we could", "you could", "we should", "you should", "it's like", "was like"}
+                   "me see", "as in", "i'd say", "tell him", "tell her", "tell them", "ask him", "ask her", "ask them", "text him", "text her", "message him",
+                   "message her", "and tell", "and ask", "saying that", "that he", "that she", "that they", "remind him", "remind her", "i would", "we could", "you could", "we should", "you should", "it's like", "was like"}
 
 # Short replies that are complete on their own
 COMPLETE_SHORT = set("""yes yeah yep yup no nope nah ok okay sure fine right correct exactly done thanks thank bye goodbye hello hi
@@ -68,6 +69,9 @@ def classify(text: str) -> str:
         return "incomplete"
     if len(words) <= 4 and all(w in COMPLETE_SHORT or w in FILLER for w in words) and any(w in COMPLETE_SHORT for w in words):
         return "complete"
+    lead = words[1] if words[0] in ("jarvis", "please", "hey", "ok", "okay") and len(words) > 1 else words[0]
+    if lead in COMMAND_START and len(words) <= 8:
+        return "complete"
     return "neutral"
 
 
@@ -84,9 +88,27 @@ def _squash(w: str) -> str:
 _BACK = {_squash(w) for w in BACKCHANNEL}
 
 
+# Words that mean "stop / let me talk" even when said briefly
+STOP_WORDS = set("""stop wait no hold sorry excuse hang jarvis listen actually nahi ruko suno""".split())
+
+
+def is_interruption(text: str) -> bool:
+    """A short sound over Jarvis counts as an interruption only if it says so: a stop-word, or a few real words."""
+    words = re.findall(r"[\w']+", text.lower())
+    if not words or is_backchannel(text):
+        return False
+    return any(w in STOP_WORDS for w in words) or len(words) >= 3
+
+
 def is_backchannel(text: str) -> bool:
     words = re.findall(r"[\w'-]+", text.lower())
     return 0 < len(words) <= 3 and all(_squash(w) in _BACK for w in words)
+
+
+# A short instruction that starts with one of these and doesn't end mid-thought is finished ("open YouTube", "pause it")
+COMMAND_START = set("""open close play pause stop resume skip call send search google find show go scroll click type turn set
+remind mute unmute switch read tell what's whats what where who when how start end hang take join answer add remove delete
+mark save remember forget cancel next previous volume""".split())
 
 
 WAIT = {"complete": 0.55, "neutral": 1.0, "incomplete": 3.0, None: 1.3}    # seconds of silence before the turn is over
@@ -112,7 +134,8 @@ class Recogniser:
         try:
             from faster_whisper import WhisperModel
             t0 = time.monotonic()
-            self.model = WhisperModel(self.name, device="cpu", compute_type="int8", cpu_threads=6)
+            self.model = WhisperModel(self.name, device="cpu", compute_type="int8", cpu_threads=4)
+            self.text(np.zeros(RATE, dtype=np.int16).tobytes())       # the first run is slow: do it now, not mid-conversation
             log.info("turn-taking recogniser (%s) ready in %.1fs", self.name, time.monotonic() - t0)
         except Exception as e:
             log.warning("turn-taking recogniser unavailable (%s); using timing only", e)
@@ -120,6 +143,7 @@ class Recogniser:
     def text(self, pcm: bytes) -> str | None:
         if self.model is None:
             return None
+        pcm = pcm[-RATE * 2 * 3:]                                       # the ending is all that matters; shorter is faster
         x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768
         segs, _ = self.model.transcribe(x, beam_size=1, vad_filter=False, without_timestamps=True,
                                         condition_on_previous_text=False)
@@ -142,6 +166,7 @@ class TurnTaker:
         self.ducked = False
         self.duck_audio = bytearray()                          # what they said while Jarvis was paused
         self.duck_check: str | None = None                     # None, "pending", "backchannel" or "speech"
+        self.duck_voiced = 0                                   # frames of speech since Jarvis was paused
         self.last_voice = 0.0
         self.turn_started = 0.0
         self.preroll: deque[bytes] = deque(maxlen=10)          # ~400 ms kept so the first syllable isn't cut off
@@ -170,7 +195,7 @@ class TurnTaker:
             text = self.rec.text(pcm) if self.rec else ""
         except Exception:
             text = ""
-        self.duck_check = "backchannel" if is_backchannel(text or "") else "speech"
+        self.duck_check = "speech" if is_interruption(text or "") else "backchannel"
         log.info("over Jarvis they said %r -> %s", text, self.duck_check)
 
     def _open(self, now: float):
@@ -193,18 +218,21 @@ class TurnTaker:
             self.preroll.append(pcm)
             if jarvis_speaking or self.ducked:
                 if not self.ducked and sum(w[-8:]) >= 6:            # ~0.25 s of speech over him: pause his voice
-                    self.ducked, self.duck_check = True, None
+                    self.ducked, self.duck_check, self.duck_voiced = True, None, 0
                     self.duck_audio = bytearray(b"".join(list(self.preroll)[-8:]))
                     ev.append("duck")
                     return ev
                 if not self.ducked:
                     return ev
                 self.duck_audio.extend(pcm)
+                self.duck_voiced += voice
                 quiet = not any(w[-6:])
                 if self.duck_check == "backchannel" and quiet:      # it was an "mm-hm" and they stopped: carry on
                     self.ducked = False
                     return ev + ["unduck"]
-                if self.duck_check == "speech" or sum(w) >= 23 or (self.rec is None or self.rec.model is None) and sum(w) >= 19:
+                long_talk = self.duck_voiced >= 40                    # ~1.6 s of speech: clearly taking the turn, whatever was heard
+                no_rec = (self.rec is None or self.rec.model is None) and sum(w) >= 19   # no recogniser: duration decides
+                if self.duck_check == "speech" or long_talk or no_rec:
                     self.ducked = False                             # a real interruption: drop his sentence and listen
                     self._open(now)
                     self.utterance = bytearray(self.duck_audio)     # everything they said since he paused, not just the last 0.4 s
@@ -236,7 +264,10 @@ class TurnTaker:
             self._deciding = True
             tail = bytes(self.utterance[-RATE * 2 * 4:])     # the last ~4 s is enough to judge how it ends (and is fast)
             threading.Thread(target=self._decide, args=(tail, self.turn_started), daemon=True).start()
-        if silence >= WAIT[self.verdict] or silence >= 3.2:
+        limit = WAIT[self.verdict]
+        if self.verdict is None and self._deciding:
+            limit = 2.0                                      # a check is still running: don't guess, give it a moment
+        if silence >= limit or silence >= 3.2:
             self.in_turn = False
             self.voice_streak = 0
             self.window.clear()

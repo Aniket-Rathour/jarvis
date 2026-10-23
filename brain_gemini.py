@@ -53,6 +53,11 @@ class GeminiBrain:
         self.skip_nudge = False
         self._logged_utt = ""
         self.handoff = ""                           # recent conversation from the other brain, for the next connect
+        self._acc = bytearray()                     # mic audio waiting to fill a 40 ms frame
+        self.turns = None
+        if config.SMART_TURNS:
+            from turn_taking import Recogniser, TurnTaker
+            self.turns = TurnTaker(Recogniser.shared())
 
     # ---- availability / lifecycle --------------------------------------------------------
     def available(self) -> tuple[bool, str]:
@@ -90,20 +95,40 @@ class GeminiBrain:
             output_audio_transcription=types.AudioTranscriptionConfig(),
             speech_config=types.SpeechConfig(language_code="en-US", voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=config.VOICE))),
-            realtime_input_config=types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(
-                    prefix_padding_ms=300, silence_duration_ms=config.VAD_SILENCE_MS)),
+            realtime_input_config=types.RealtimeInputConfig(automatic_activity_detection=(
+                types.AutomaticActivityDetection(disabled=True) if config.SMART_TURNS else      # turns decided in turn_taking.py
+                types.AutomaticActivityDetection(prefix_padding_ms=300, silence_duration_ms=config.VAD_SILENCE_MS))),
             session_resumption=types.SessionResumptionConfig(handle=self.resume_handle),
             context_window_compression=types.ContextWindowCompressionConfig(sliding_window=types.SlidingWindow()),
         )
 
     # ---- hooks from the assistant ---------------------------------------------------------
     def feed_audio(self, chunks, voice, now):
+        """Audio thread. With SMART_TURNS the turn-taker decides when he started and really finished speaking (a pause
+        mid-thought is not the end), and pauses/stops Jarvis' voice when he talks over it."""
+        if not config.SMART_TURNS:
+            for c in chunks:
+                self.a.loop.call_soon_threadsafe(self._enqueue, c)
+            return
         for c in chunks:
-            self.a.loop.call_soon_threadsafe(self._enqueue, c)
+            self._acc.extend(c)
+            while len(self._acc) >= 1280:                          # 40 ms frames for the turn-taker
+                frame = bytes(self._acc[:1280]); del self._acc[:1280]
+                events = self.turns.on_frame(frame, jarvis_speaking=self.a.speaking())
+                for e in events:
+                    if e == "start":
+                        self.a.loop.call_soon_threadsafe(self._enqueue, ("start", bytes(self.turns.utterance)))
+                    elif e == "audio" and "start" not in events:
+                        self.a.loop.call_soon_threadsafe(self._enqueue, frame)
+                    elif e == "end":
+                        self.a.loop.call_soon_threadsafe(self._enqueue, ("end", b""))
+                    elif e in ("duck", "unduck") and self.a.speaker:
+                        self.a.speaker.hold(e == "duck")
+                    elif e == "barge":
+                        self.a.loop.call_soon_threadsafe(self.a.stop_speaking)
 
-    def _enqueue(self, data: bytes):
-        if not self.mic_q.full():
+    def _enqueue(self, data):
+        if isinstance(data, tuple) or not self.mic_q.full():        # turn markers are never dropped
             self.mic_q.put_nowait(data)
 
     def on_new_request(self):
@@ -162,6 +187,8 @@ class GeminiBrain:
                     self.handoff = ""
                     while not self.mic_q.empty():
                         self.mic_q.get_nowait()
+                    if self.turns:
+                        self.turns.in_turn = False
                     for n in a.take_notes():
                         await self.notify(n)
                     workers = [asyncio.create_task(self._send_mic(session)), asyncio.create_task(self._receive(session))]
@@ -195,6 +222,15 @@ class GeminiBrain:
     async def _send_mic(self, session):
         while True:
             data = await self.mic_q.get()
+            if isinstance(data, tuple):                              # a turn marker from the turn-taker
+                kind, pre = data
+                if kind == "start":
+                    await session.send_realtime_input(activity_start=types.ActivityStart())
+                    for i in range(0, len(pre), 1280):
+                        await session.send_realtime_input(audio=types.Blob(data=pre[i:i + 1280], mime_type=f"audio/pcm;rate={IN_RATE}"))
+                else:
+                    await session.send_realtime_input(activity_end=types.ActivityEnd())
+                continue
             await session.send_realtime_input(audio=types.Blob(data=data, mime_type=f"audio/pcm;rate={IN_RATE}"))
 
     async def _receive(self, session):

@@ -29,11 +29,15 @@ class Speaker:
         self._lock = threading.Lock()
         self.level = 0.0
         self.last_sound = 0.0
+        self.held = False                    # paused mid-sentence while someone may be interrupting
         self._stream = sd.RawOutputStream(samplerate=OUT_RATE, channels=1, dtype="int16", device=device,
                                           blocksize=OUT_BLOCK, latency="low", callback=self._cb)
 
     def _cb(self, outdata, frames, t, status):
         n = frames * 2
+        if self.held:
+            outdata[:] = b"\0" * n
+            return
         with self._lock:
             chunk = bytes(self._buf[:n])
             del self._buf[:n]
@@ -55,6 +59,10 @@ class Speaker:
         with self._lock:
             self._buf.clear()
         self.level = 0.0
+        self.held = False
+
+    def hold(self, on: bool):
+        self.held = on
 
     @property
     def playing(self) -> bool:

@@ -78,7 +78,7 @@ barge = [t for t, e in ev if e == "barge"]
 print("C interruption:", ev)
 duck = [t for t, e in ev if e == "duck"]
 results["a real interruption pauses Jarvis at once (< 0.5 s)"] = bool(duck) and duck[0] - 0.4 < 0.5
-results["...and stops him for good within ~1.6 s"] = bool(barge) and barge[0] - 0.4 < 1.65
+results["...and (already silent) drops his sentence within ~2 s"] = bool(barge) and barge[0] - 0.4 < 2.0
 
 for k, v in results.items():
     print(("PASS " if v else "FAIL ") + k)
