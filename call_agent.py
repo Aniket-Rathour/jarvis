@@ -59,8 +59,10 @@ TOOLS = [types.Tool(function_declarations=[
 
 
 class CallAgent:
-    def __init__(self, a, mission: str, who: str, platform: str, audio: call_audio.CallAudio, attached: bool = False):
+    def __init__(self, a, mission: str, who: str, platform: str, audio: call_audio.CallAudio, attached: bool = False, scope: dict | None = None):
         self.attached = attached
+        self.scope = scope or {}
+        self.peak_heard = 0                               # loudest remote sound so far, for diagnosing 'I can't hear them'
         self.a, self.mission, self.who, self.platform, self.audio = a, mission.strip(), who.strip(), platform, audio
         self.mouth: call_audio.Mouth | None = None
         self.ear: call_audio.Ear | None = None
@@ -116,9 +118,16 @@ class CallAgent:
                                asyncio.create_task(self._watch())]
                 log.info("call agent connected: %s", self.mission[:80])
                 self.deaf_until = time.monotonic() + 1.5
-                await self._await_pickup()
-                if not self.ended.is_set() and not self.transcript and not self._buf["jarvis"] and not (self.mouth and self.mouth.speaking):
-                    await session.send_realtime_input(text="[The person has answered and the call is live. Say your opening now.]")
+                spoke = await self._await_pickup()
+                if not spoke and not self.ended.is_set():
+                    self.end("Nobody said anything after the call connected, so I hung up.")
+                elif not self.ended.is_set():
+                    for _ in range(25):                           # the model normally answers their hello by itself
+                        if self._jarvis_spoke() or self.ended.is_set():
+                            break
+                        await asyncio.sleep(0.2)
+                    else:
+                        await session.send_realtime_input(text="[They have greeted you. Give your opening now.]")
                 await self.ended.wait()
         finally:
             for t in self._tasks:
@@ -130,15 +139,32 @@ class CallAgent:
                 self.ear.close()
         return self.summary or self._auto_summary()
 
-    async def _await_pickup(self):
-        """The call page says the call is connected; now wait for the person to actually say something (a greeting). If they
-        stay silent for a few seconds, begin anyway. Ring tones and chimes produce no words, so they don't count."""
+    def _remote_spoke(self) -> bool:
+        return bool(self._buf["them"].strip()) or any(w == "them" for w, _ in self.transcript)
+
+    def _jarvis_spoke(self) -> bool:
+        return bool(self._buf["jarvis"].strip()) or any(w == "jarvis" for w, _ in self.transcript) or bool(self.mouth and self.mouth.speaking)
+
+    async def _await_pickup(self) -> bool:
+        """The page says the call is connected. Now WAIT for the other person to say something (their "hello"): ring tones and
+        chimes make no words, so they don't count. After 15 s of silence say a bare 'Hello?' once; after 25 s give up.
+        Returns True when they spoke."""
         t0 = time.monotonic()
-        while time.monotonic() - t0 < 7 and not self.ended.is_set():
-            if self._buf["them"].strip() or any(w == "them" for w, _ in self.transcript):
-                await asyncio.sleep(0.6)               # let their greeting finish
-                return
+        said_hello = False
+        while not self.ended.is_set():
+            waited = time.monotonic() - t0
+            if self._remote_spoke():
+                await asyncio.sleep(0.8)                          # let their greeting finish
+                return True
+            if waited > 15 and not said_hello and self.session:
+                said_hello = True
+                log.info("call: nobody has spoken for 15 s; saying a bare 'Hello?'")
+                await self.session.send_realtime_input(text="[Nobody has said anything yet. Say only 'Hello?' and then wait. "
+                                                            "Do not start your message.]")
+            if waited > 25:
+                return False
             await asyncio.sleep(0.2)
+        return False
 
     def _auto_summary(self) -> str:
         said = " ".join(f"{w}: {t}" for w, t in self.transcript[-6:])
@@ -169,7 +195,9 @@ class CallAgent:
             if not pcm:
                 self.end(); return
             x = np.frombuffer(pcm, dtype=np.int16)
-            if x.size and float(np.sqrt(np.mean(x.astype(np.float32) ** 2))) > 250:        # the caller is audibly speaking
+            rms = float(np.sqrt(np.mean(x.astype(np.float32) ** 2))) if x.size else 0.0
+            self.peak_heard = max(self.peak_heard, int(rms))
+            if rms > 250:                                                                  # the caller is audibly speaking
                 self.audible_until = time.monotonic() + 0.9
             if self.paused or not self.session or time.monotonic() < self.deaf_until:
                 continue
@@ -247,9 +275,19 @@ class CallAgent:
     async def _watch(self):
         """Ends the agent when the call page says the call is over, or the time limit is reached."""
         from browser_bridge import bridge
-        gone, nudges = 0, 0
+        gone, nudges, warned, logged = 0, 0, False, 0.0
         while True:
             await asyncio.sleep(2)
+            since = time.monotonic() - self.started
+            if since - logged >= 10:
+                logged = since
+                log.info("call audio: loudest sound heard from the call so far = %d (speech is ~1000+); streams routed: %d playing, %d capture",
+                         self.peak_heard, len(self.audio.moved_in), len(self.audio.moved_out))
+            if since > 14 and not warned and self.peak_heard < 120:
+                warned = True
+                log.warning("call: no sound from the call after 14 s (routed %d playback / %d capture streams)", len(self.audio.moved_in), len(self.audio.moved_out))
+                await self.a.notify(f"[Call warning] I can't hear any sound from the call yet (call audio streams found: {len(self.audio.moved_in)}). "
+                                    f"If the person has answered, Chrome's call audio is not reaching me. Tell {config.USER_NAME} briefly.")
             quiet = time.monotonic() - self.last_activity
             if quiet < 3:
                 nudges = 0
@@ -263,10 +301,16 @@ class CallAgent:
                       "states clearly what was NOT answered.]")
                 nudges += 1
                 await self.session.send_realtime_input(text=msg)
-            out = await bridge.call("call_state", timeout=8)
+            out = await bridge.call("call_state", timeout=8, **self.scope)
             gone = gone + 1 if ("phase: ended" in out or "phase: none" in out or out.startswith("error")) else 0
             if gone >= 3:
                 self.end(); return
+
+
+def parse_state(out: str) -> dict:
+    """'phase: in_call; mic: on; platform: meet; tab: 12; ...'  ->  {'phase': 'in_call', ...}"""
+    return {k.strip(): v.strip() for k, _, v in (p.partition(": ") for p in out.split(";")) if v} | (
+        {"phase": "none"} if out.startswith("phase: none") else {})
 
 
 class CallManager:
@@ -274,6 +318,7 @@ class CallManager:
 
     def __init__(self, a):
         self.a = a
+        self.scope: dict = {}              # {platform, code, tab}: which browser tab IS this call (others are never touched)
         self.agent: CallAgent | None = None
         self.audio: call_audio.CallAudio | None = None
         self.task: asyncio.Task | None = None
@@ -356,6 +401,7 @@ class CallManager:
         a = self.a
         from browser_bridge import bridge
         report, isolated = "The call could not be started.", False
+        self.scope = {"platform": platform} if platform in ("whatsapp", "meet") else {}
         try:
             attach = mode == "attach"
             if attach:
@@ -365,16 +411,18 @@ class CallManager:
                     report = await self._fail("I can't see a call in progress in Chrome. " + (
                         "The extension says: " + st[:200] if not st.startswith("phase: none") else "No WhatsApp or Meet call is open."))
                     return
-                platform = next((p.split(": ")[1] for p in st.split(";") if p.strip().startswith("platform:")), "meet").strip()
+                info = parse_state(st)
+                platform = info.get("platform", "meet")
                 who = who or platform
+                self.scope = {"platform": platform, **({"tab": info["tab"]} if info.get("tab") else {})}
             await asyncio.to_thread(self.audio.setup, attach)
             if attach:
-                iso = await bridge.call("call_isolate", timeout=15)
+                iso = await bridge.call("call_isolate", timeout=15, **self.scope)
                 isolated = not iso.startswith("error")
-                await bridge.call("call_mic", timeout=10, on=True)          # his own mute would also silence Jarvis
+                await bridge.call("call_mic", timeout=10, on=True, **self.scope)          # his own mute would also silence Jarvis
                 await asyncio.to_thread(self.audio.route_once)
             elif incoming:
-                r = await bridge.call("call_answer", timeout=15)
+                r = await bridge.call("call_answer", timeout=15, **self.scope)
             elif mode == "join":
                 r = await bridge.call("wa_chat", timeout=60, name=who)
                 if r.startswith("error"):
@@ -394,22 +442,28 @@ class CallManager:
                         report = await self._fail("I don't have a Meet link, and there is none in the open chat."); return
                     link = meet[-1]
                 r = await bridge.call("meet_join", timeout=75, url=link, owner=config.USER_NAME)
+                import re
+                m = re.search(r"[a-z]{3}-[a-z]{4}-[a-z]{3}", link, re.I)
+                if m:
+                    self.scope["code"] = m.group(0).lower()               # THIS meeting, not whichever Meet tab is open
             if not attach and r.startswith("error"):
                 report = await self._fail(f"I couldn't start the call: {r[7:]}"); return
             self.state = "connecting"
             phase = "in_call" if (attach or r == "already in that meeting") else await self._wait_connected(bridge, 60 if platform == "whatsapp" else 40, platform)
             if phase != "in_call":
-                await bridge.call("call_end", timeout=10)
+                await bridge.call("call_end", timeout=10, **self.scope)
                 report = await self._fail(f"{who or 'They'} didn't pick up." if phase == "ringing" else
                                           "I'm waiting in the Meet lobby but nobody let me in yet." if phase == "prejoin" else
                                           f"The call never connected (last state: {phase or 'unknown'}).")
                 return
             self.state = "in call"
-            self.agent = CallAgent(a, mission, who, platform, self.audio, attached=attach)
+            if platform == "whatsapp" or attach:
+                await bridge.call("call_mic", timeout=10, on=True, **self.scope)      # an unmuted call, or nobody hears Jarvis
+            self.agent = CallAgent(a, mission, who, platform, self.audio, attached=attach, scope=self.scope)
             await a.notify(f"[Call connected with {who or platform}. I'm handling it; tell {config.USER_NAME} briefly that the call has started.]")
             report = await self.agent.run()
             if not attach:
-                await bridge.call("call_end", timeout=10)
+                await bridge.call("call_end", timeout=10, **self.scope)
         except Exception as e:
             log.exception("call failed")
             report = await self._fail(f"The call failed: {str(e)[:150]}")
@@ -417,7 +471,7 @@ class CallManager:
             self.state = "idle"
             if isolated or mode == "attach":
                 try:
-                    await bridge.call("call_release", timeout=10)
+                    await bridge.call("call_release", timeout=10, **self.scope)
                 except Exception:
                     pass
             if self.audio:
@@ -438,9 +492,8 @@ class CallManager:
         8 polls in a row (a layout I can't read), accept it so the call isn't abandoned."""
         phase, last, stable, unsure = "", "", 0, 0
         for _ in range(seconds):
-            out = await bridge.call("call_state", timeout=8)
-            info = {k.strip(): v.strip() for k, _, v in (p.partition(": ") for p in out.split(";")) if v}
-            phase = info.get("phase", "none") if not out.startswith("phase: none") else "none"
+            out = await bridge.call("call_state", timeout=8, **self.scope)
+            phase = parse_state(out).get("phase", "none")
             if out != last:
                 log.info("call state: %s", out[:220]); last = out
             if phase == "in_call":

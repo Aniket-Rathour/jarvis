@@ -39,15 +39,18 @@ async def main() -> int:
         told.append(n)
     assistant.notify = notify
     async with Harness() as bridge:
+        print("a Meet meeting is already open and in progress:", await bridge.call("meet_join", url="abc-defg-hij", owner="Aniket"))
         mgr = call_agent.CallManager(assistant)
         t_start = time.monotonic()
         print("start ->", await mgr.start("whatsapp", "Mom", "Tell Mom that Aniket will be home 30 minutes late for dinner, "
                                           "and ask if she needs anything from the shop."))
         # wait for the call to connect (mock page: ringing -> in_call after 1.5 s), then speak as Mom
-        for _ in range(120):
+        t_agent = None
+        for _ in range(240):
             if mgr.agent and mgr.agent.session:
+                t_agent = time.monotonic() - t_start
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.25)
         assert mgr.agent and mgr.agent.session, f"the agent never started (state {mgr.state}, told {told})"
         play = subprocess.Popen(["pacat", f"--device={call_audio.FROM_CALL}", "--rate=24000", "--format=s16le", "--channels=1"], stdin=subprocess.PIPE)
 
@@ -78,7 +81,8 @@ async def main() -> int:
         for w, t in ag.transcript:
             print(f"  {w:>6}: {t}")
         print("notes:", ag.notes, "\nsummary:", ag.summary)
-        state_after = await bridge.call("call_state")
+        state_after = await bridge.call("call_state", platform="whatsapp")
+        meet_after = await bridge.call("call_state", platform="meet")
         stored = memory.get_research("call")
         left = [ln for ln in call_audio._pactl("list", "short", "modules").splitlines() if "jarvis_to_call" in ln or "jarvis_from_call" in ln]
         said = " ".join(t for w, t in ag.transcript if w == "jarvis").lower()
@@ -87,6 +91,9 @@ async def main() -> int:
         checks = {
             "greeted by name: 'Hello Mom, this is Jarvis'": first_line.startswith("hello mom") and "this is jarvis" in first_line,
             "did NOT call itself an assistant / say whose": "assistant" not in first_line and "aniket" not in first_line.split("jarvis")[0],
+            "did not start talking while it was ringing (waited for the call timer)": t_agent is not None and t_agent >= 2.0,
+            "waited for HER hello before saying anything": bool(ag.transcript) and ag.transcript[0][0] == "them",
+            "the other meeting was left alone": "phase: in_call" in meet_after,
             "hung up by itself after the talk": "owner ended" not in (ag.summary or "").lower() and elapsed < 80,
             "agent delivered the message (late)": "late" in said or "30" in said,
             "agent heard Mom": any(w == "them" for w, _ in ag.transcript),
