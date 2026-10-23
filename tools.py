@@ -195,6 +195,18 @@ DECLARATIONS = [
         "offset": _s("INTEGER", "text: character offset to continue reading"), "timeout": _s("INTEGER", "wait_for: seconds"),
         "direction": _s("STRING", enum=["up", "down", "top", "bottom", "left", "right"])},
         ["action"]),
+    _fn("call", "Make or join a VOICE CALL on his behalf, on WhatsApp Web or Google Meet, using Chrome. You talk to the other "
+        "person yourself (as Jarvis, his AI assistant, in your own voice) and stick to the mission he gave you. Actions: "
+        "start (platform whatsapp + who = the contact, OR platform meet + url = the link/code; mission = exactly what to say "
+        "or find out, with every detail he gave) | answer (accept an incoming WhatsApp call and handle it; mission) | status | "
+        "say (text = a live instruction or answer from him to pass to the person on the call) | takeover (he talks himself) | "
+        "resume (you carry on) | end. BEFORE start/answer you must show_plan with needs_approval=true reading back who, which "
+        "app and what you will say, and wait for his yes.", {
+        "action": _s("STRING", enum=["start", "answer", "status", "say", "takeover", "resume", "end"]),
+        "platform": _s("STRING", enum=["whatsapp", "meet"]), "who": _s("STRING", "WhatsApp contact or group name"),
+        "url": _s("STRING", "Google Meet link or code like abc-defg-hij"),
+        "mission": _s("STRING", "What to say or find out on the call, complete, with every detail"),
+        "text": _s("STRING", "say: his words to pass on to the person on the call")}, ["action"]),
     _fn("remember", "Save something to your permanent memory (survives restarts): facts about him, people, preferences, "
         "decisions, anything he asks you to remember or that will matter later.", {"text": _s("STRING", "The fact, in a full sentence"),
         "kind": _s("STRING", enum=["fact", "preference", "person", "note"])}, ["text"]),
@@ -258,6 +270,7 @@ LOCAL_TOOLS = {                 # tool -> parameters it keeps (None = all). Thin
     "delegate_to_claude": ["task", "where", "complexity", "workdir"], "delegate_to_opencode": ["task", "workdir"],
     "browser": ["action", "url", "text", "name", "field", "submit", "tab", "key", "direction", "fields"],
     "remember": None, "recall": None, "todo": ["action", "items", "match", "due"], "recall_research": ["query"],
+    "call": ["action", "platform", "who", "url", "mission", "text"],
 }
 LOCAL_DESC = {                  # one tight line each where the full text is long
     "browser": "Control his real Chrome. Call action=context FIRST when he refers to the screen. type needs field= "
@@ -267,6 +280,7 @@ LOCAL_DESC = {                  # one tight line each where the full text is lon
     "todo": "His permanent to-do list: add (items, due), list, done/remove (match).",
     "deep_research": "Research a topic thoroughly on the web (takes minutes).",
     "run_routine": "Run his morning_plan, night_log or weekly_review.",
+    "call": "Phone someone on his behalf via WhatsApp Web or Google Meet (as Jarvis, his AI assistant). Needs show_plan approval first.",
     "remember": "Save a fact to permanent memory.", "recall": "Search permanent memory.",
     "recall_research": "Read back the full result of earlier research/jobs.",
     "ask_gemini": "Ask a stronger cloud model something hard (maths, long explanations, drafts).",
@@ -323,7 +337,7 @@ LABELS = {"open_bookmark": "Open bookmark", "find_bookmarks": "Look up bookmark"
           "set_reminder": "Reminder", "look_at_screen": "Looking at your screen", "point_at": "Pointing at",
           "clear_pointer": "Hide pointer", "deep_research": "Research", "day_status": "Today's memory",
           "day_update": "Updating today's memory", "run_routine": "Routine", "routine_reply": "Routine reply",
-          "switch_brain": "Switch brain", "browser": "Chrome", "delegate_to_opencode": "OpenCode", "remember": "Remember", "recall": "Recall", "todo": "To-do", "recall_research": "Recall research", "forget": "Forget"}
+          "switch_brain": "Switch brain", "browser": "Chrome", "call": "Call", "delegate_to_opencode": "OpenCode", "remember": "Remember", "recall": "Recall", "todo": "To-do", "recall_research": "Recall research", "forget": "Forget"}
 
 
 CODE_TASK = re.compile(r"\b(code|script|project|repo(?:sitory)? (?:in|at|on) (?:my |the )?(?:disk|folder|pc)|function|"
@@ -359,6 +373,8 @@ def describe(name: str, a: dict) -> tuple[str, str]:
         return ("chrome" if a.get("where") == "chrome" else "claude"), (tag + a.get("task", ""))[:120]
     if name == "delegate_to_opencode":
         return "claude", ("[OpenCode·Qwen] " + a.get("task", ""))[:120]
+    if name == "call":
+        return "chrome", f"Call {a.get('action', '')} {a.get('who') or a.get('url') or ''}".strip()[:120]
     if name == "browser":
         return "chrome", " ".join(str(v) for v in (a.get("action"), a.get("url") or a.get("text") or a.get("tab") or
                                                    a.get("ref") or a.get("key") or a.get("direction") or "") if v)[:120]
@@ -410,6 +426,9 @@ class Toolbox:
             return "it installs software"
         if name == "run_command" and desktop.RISKY.search(a.get("command", "")):
             return "the command changes the system"
+        if name == "call" and a.get("action") in ("start", "answer"):
+            return ("it phones a real person on his behalf: read back who, on which app, and what you will say (show_plan with "
+                    "needs_approval=true) and wait for his yes")
         if name == "delegate_to_opencode" and RISKY_TASK.search(a.get("task", "")):
             return "the task installs, deletes or reconfigures things"
         if name == "delegate_to_claude" and (a.get("changes_system") or RISKY_TASK.search(a.get("task", ""))):
@@ -692,6 +711,19 @@ class Toolbox:
             return jobs.cancel(a.get("job_id", ""))
         if name == "browser":
             return await self._browser(a)
+        if name == "call":
+            c, act = self.j.calls, a.get("action", "status")
+            if act == "start":
+                return await c.start(a.get("platform", "whatsapp"), a.get("who", ""), a.get("mission", ""), a.get("url", ""))
+            if act == "answer":
+                return await c.start("whatsapp", a.get("who", "the caller"), a.get("mission", ""), incoming=True)
+            if act == "say":
+                return await c.say(a.get("text") or a.get("mission") or "")
+            if act in ("takeover", "resume"):
+                return c.takeover(act == "takeover")
+            if act == "end":
+                return await c.end()
+            return c.status()
         if name == "remember":
             return await t(memory.remember, a.get("text", ""), a.get("kind") or "fact")
         if name == "forget":

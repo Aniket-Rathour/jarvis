@@ -1,0 +1,13 @@
+<!doctype html><title>Meet</title><meta charset=utf-8><body style="font:14px sans-serif">
+<div id=pre><h3>Ready to join?</h3><input type=text placeholder="Your name" id=nm><br>
+<button aria-label="Turn on microphone (ctrl + d)" id=mic0>mic off</button> <button aria-label="Turn off camera (ctrl + e)" id=cam0>cam on</button><br>
+<button id=jn><span>Join now</span></button></div>
+<div id=live style="display:none"><p>In the meeting</p><button aria-label="Turn off microphone (ctrl + d)" id=mic1>mic</button> <button aria-label="Leave call" id=lv>Leave</button></div>
+<div id=gone style="display:none">You left the meeting</div>
+<script>
+mic0.onclick=()=>{mic0.setAttribute('aria-label','Turn off microphone (ctrl + d)')};
+cam0.onclick=()=>{cam0.setAttribute('aria-label','Turn on camera (ctrl + e)')};
+jn.onclick=()=>{window.__joined={mic:mic0.getAttribute('aria-label'),cam:cam0.getAttribute('aria-label'),name:nm.value};pre.style.display='none';live.style.display='block'};
+mic1.onclick=()=>{mic1.setAttribute('aria-label',mic1.getAttribute('aria-label').startsWith('Turn off')?'Turn on microphone (ctrl + d)':'Turn off microphone (ctrl + d)')};
+lv.onclick=()=>{live.style.display='none';gone.style.display='block'};
+</script>

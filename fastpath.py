@@ -59,6 +59,10 @@ M_FORGET = re.compile(rf"^{_P}forget (?:that |about )?(?P<f>.{{3,}}?)[.!]*$", re
 T_ADD = re.compile(rf"^{_P}(?:add|put|put down|note down) (?P<x>.+?) (?:to|on|in) (?:my |the )?(?:to-?do|todo|task)s?(?: list)?(?: (?:for|by|due|before|on) (?P<d>.+?))?[.!]*$", re.I)
 T_LIST = re.compile(rf"^{_P}(?:what(?:'s| is| are)(?: on| in)? my (?:to-?do|todo|task)s?(?: list)?|(?:read|show|list|tell me) (?:me )?my (?:to-?do|todo|task)s?(?: list)?|what do i (?:have|need) to do)(?: (?:for |due )?(?P<w>today|this week|overdue))?[.?!]*$", re.I)
 T_DONE = re.compile(rf"^{_P}(?:mark|tick|check off|cross off|remove) (?P<x>.+?) (?:as )?(?:done|complete|completed|finished|off)(?: (?:in|on|from) my (?:to-?do|todo)(?: list)?)?[.!]*$|^{_P}(?:mark|tick|check off|cross off) off (?P<x2>.+?)(?: (?:in|on|from) my (?:to-?do|todo)(?: list)?)?[.!]*$", re.I)
+C_END = re.compile(rf"^{_P}(?:hang up|end (?:the |this )?call|leave (?:the |this )?(?:call|meeting)|disconnect)[.!?]*$", re.I)
+C_TAKE = re.compile(rf"^{_P}(?:i(?:'ll| will) (?:take over|talk|speak|handle (?:it|this))(?: (?:myself|now))?|let me (?:talk|speak)(?: to (?:them|him|her))?|"
+                    rf"(?:i'?ll )?take over(?: the call)?|give me the call)[.!?]*$", re.I)
+C_BACK = re.compile(rf"^{_P}(?:you take over|carry on|go ahead|continue(?: the call)?|resume(?: the call)?|you (?:talk|handle (?:it|this)))[.!?]*$", re.I)
 B_KEY = re.compile(rf"^{_P}press (?:the )?(?P<k>enter|escape|tab|backspace|space)(?: key)?[.!?]*$", re.I)
 OPENCODE = re.compile(rf"^{_P}(?:use |ask |tell |let |get )?open ?code(?: to| and)? (?P<task>.{{6,}}?)[.!?]*$|"
                       rf"^{_P}(?P<task2>(?:code|build|write|create|fix|refactor|make|add).{{6,}}?) (?:with|using|in|on) (?:open ?code|qwen)[.!?]*$", re.I)
@@ -161,8 +165,27 @@ async def _memory_cmds(j, t: str) -> str | None:
     return None
 
 
+async def _call_cmds(j, t: str) -> str | None:
+    """While a call is running: end it, take it over, hand it back. Instant, no model."""
+    c = getattr(j, "calls", None)
+    if not (c and c.active):
+        return None
+    if C_END.match(t):
+        await c.end()
+        return _say(j, "Ending the call, sir.")
+    if C_TAKE.match(t):
+        c.takeover(True)
+        return _say(j, "The call is yours, sir. I'm silent.")
+    if C_BACK.match(t):
+        c.takeover(False)
+        return _say(j, "I have the call, sir.")
+    return None
+
+
 async def handle(j, text: str) -> str | None:
     t = text.strip()
+    if quick := await _call_cmds(j, t):
+        return quick
     if quick := await _memory_cmds(j, t):
         return quick
     if m := OPENCODE.match(t):

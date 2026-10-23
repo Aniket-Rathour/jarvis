@@ -69,6 +69,15 @@ def run():
     ext = json.loads((config.ROOT / "chrome_extension/manifest.json").read_text())
     _row(OK, "Extension version", ext.get("version", "?"))
 
+    # calls
+    pa = shutil.which("pactl") and shutil.which("pacat") and shutil.which("parec")
+    _row(OK if pa else BAD, "Call audio tools", "pactl / pacat / parec found" if pa else "missing",
+         "sudo dnf install pulseaudio-utils" if not pa else "")
+    left = [ln for ln in subprocess.run(["pactl", "list", "short", "modules"], capture_output=True, text=True).stdout.splitlines() if "jarvis_" in ln]
+    if left and not running:
+        _row(WARN, "Call audio devices", "left over from a crashed call", "python -c 'import call_audio; call_audio.CallAudio.teardown_leftovers()'")
+    _row(OK, "Calls", f"AI disclosure {'on' if config.CALL_DISCLOSE else 'OFF'}, limit {config.CALL_MAX_MINUTES} min")
+
     # local brain
     oll = shutil.which("ollama") or str(Path.home() / ".local/bin/ollama")
     if not Path(oll).exists():

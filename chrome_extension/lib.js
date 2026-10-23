@@ -1,7 +1,7 @@
 // Page-side toolkit injected by Jarvis Hands (window.__jv). Plain DOM events, no debugger bar needed.
 // Works through open shadow roots; background.js runs it inside iframes too (J.fid = frame id).
 (() => {
-  const V = 7;
+  const V = 8;
   if (window.__jv && window.__jv.v === V) return;
   const J = (window.__jv = { v: V, n: (window.__jv && window.__jv.n) || 0, fid: (window.__jv && window.__jv.fid) || 0 });
 
@@ -506,6 +506,64 @@
     const left = norm(box.innerText);
     if (left && left.includes(norm(text).slice(0, 20))) { J.press(box, "Enter"); await J.idle(250, 1000); }
     return norm(box.innerText).includes(norm(text).slice(0, 20)) ? { ok: false, err: "the message is still in the box; it may not have sent" } : { ok: true, chat };
+  };
+  // ------------------------------------------------------------ calls (WhatsApp Web voice calls, Google Meet)
+  const btn = (re) => deep("button,[role=button],[aria-label],[data-icon]").filter(vis).find((e) => re.test(label(e) || e.getAttribute("data-icon") || ""));
+  const clickBtn = async (b) => { if (!b) return false; await clickEl(b.closest("button,[role=button]") || b); return true; };
+  J.callState = () => {
+    const meet = location.host === "meet.google.com", wa = location.host.endsWith("whatsapp.com");
+    if (!meet && !wa) return null;
+    const text = low(document.body.innerText).slice(0, 5000);
+    const mb = btn(/turn (on|off) microphone|^(un)?mute\b|(un)?mute microphone/i);
+    const ml = mb ? low(label(mb)) : "";
+    const mic = mb ? (/turn on|unmute/.test(ml) ? "off" : "on") : "?";
+    let phase = "none";
+    if (meet) {
+      if (btn(/^(leave call|end call)/i)) phase = "in_call";
+      else if (btn(/^(join now|ask to join|switch here|join anyway)/i)) phase = "prejoin";
+      else if (/you left the meeting|you've left the meeting|call ended|the meeting has ended|removed from the meeting|you were removed/.test(text)) phase = "ended";
+    } else {
+      const end = btn(/^(end call|hang up|leave call|cancel call|end)\b/i);
+      if (btn(/^(accept|answer)\b/i) && btn(/^(decline|reject)\b/i)) phase = "incoming";
+      else if (end) phase = /\b(calling|ringing|connecting|waiting for)\b/.test(text) ? "ringing" : "in_call";
+      else if (/\b(no answer|call declined|didn't answer|call ended|unavailable)\b/.test(text.slice(0, 600))) phase = "ended";
+    }
+    const buttons = phase === "none" ? "" : deep("button,[role=button]").filter(vis).map(label).filter(Boolean).slice(0, 12).join(" | ");
+    return { platform: meet ? "meet" : "whatsapp", phase, mic, buttons };
+  };
+  J.callStart = async () => {                                         // WhatsApp Web: voice-call the open chat
+    let b = btn(/^(voice call|audio call|call)$|voice call|audio call/i) || btn(/^(voice-call|audio-call|call|phone)$/);
+    if (!b) return { ok: false, err: "no call button in this chat (is a chat open? is calling available on WhatsApp Web for this account?)" };
+    await flash(b.closest("button,[role=button]") || b, "calling");
+    await clickBtn(b);
+    await sleep(700);
+    const menu = btn(/^voice\b/i);                                   // some versions ask Voice / Video
+    if (menu) { await clickBtn(menu); await sleep(500); }
+    const confirm = btn(/^(call|start call|start voice call|continue|ok)$/i);
+    if (confirm && confirm !== b) { await clickBtn(confirm); await sleep(400); }
+    return { ok: true };
+  };
+  J.callAnswer = async () => (await clickBtn(btn(/^(accept|answer)\b/i))) ? { ok: true } : { ok: false, err: "no incoming call to answer" };
+  J.callEnd = async () => (await clickBtn(btn(/^(end call|hang up|leave call|cancel call|leave|end)\b/i))) ? { ok: true } : { ok: false, err: "no call to end on this page" };
+  J.callMic = async (on) => {
+    const b = btn(/turn (on|off) microphone|^(un)?mute\b|(un)?mute microphone/i);
+    if (!b) return { ok: false, err: "no microphone button" };
+    const isOn = !/turn on|unmute/.test(low(label(b)));
+    if (isOn !== on) await clickBtn(b);
+    return { ok: true, mic: on ? "on" : "off" };
+  };
+  J.meetJoin = async (guestName) => {                                 // pre-join screen: mic on, camera off, join
+    const st = J.callState();
+    if (st && st.phase === "in_call") return { ok: true, state: "already in the meeting" };
+    const mic = btn(/turn on microphone/i); if (mic) { await clickBtn(mic); await sleep(250); }
+    const cam = btn(/turn off camera/i); if (cam) { await clickBtn(cam); await sleep(250); }
+    const name = deep("input[type=text]").filter(vis).find((i) => /name/i.test(label(i) || i.placeholder || ""));
+    if (name && !name.value && guestName) await typeInto(name, guestName, false);
+    const join = btn(/^(join now|ask to join|switch here|join anyway)/i);
+    if (!join) return { ok: false, err: "no Join button yet" };
+    const asked = /ask to join/i.test(label(join));
+    await clickBtn(join);
+    return { ok: true, state: asked ? "asked to join; waiting for someone to let me in" : "joining" };
   };
   J.has = (spec) => { const f = J.find(spec); return f.el ? describe(f.el) : null; };
   J.history = (n) => { setTimeout(() => history.go(n), 0); return true; };    // not skipped like chrome.tabs.goBack is

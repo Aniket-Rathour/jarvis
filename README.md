@@ -71,6 +71,31 @@ Claude jobs, plans, today's memory, the cursor. The choice is remembered for the
 After a switch away, Qwen stays in memory for `LOCAL_KEEP_WARM_MIN` minutes so switching back is quick, then the GPU
 is freed. Screen vision, pointing, `ask_gemini` and research still use your Gemini key from either brain.
 
+## Calls on your behalf (WhatsApp Web, Google Meet)
+
+Ask: *"call Rahul on WhatsApp and tell him I'll be 15 minutes late, and ask whether to bring the report"* or *"join this Meet
+(abc-defg-hij) and say I'm running 5 minutes behind"*. Jarvis reads back who, where and what it will say, waits for your
+**yes**, then opens the chat, places the call, waits until it is answered, and talks to them in **its own voice** (a second
+Gemini Live session just for the call), keeping to the mission you gave it.
+
+- **You hear everything live**: the caller *and* Jarvis, about 80 ms delayed, through your normal speakers/headphones. The
+  window shows the running transcript. With headphones you can keep talking to Jarvis normally during the call
+  (*"tell her 5 pm"* is passed into the call). On speakers Jarvis ignores its microphone while call audio is playing, so it
+  can't mistake the caller for you; headphones are better.
+- **Take over any time**: *"I'll talk"* (Jarvis goes silent and your real microphone goes into the call), *"carry on"* (Jarvis
+  resumes), *"hang up"*.
+- **It says what it is**: it opens with *"Hello, this is Jarvis, <you>'s AI assistant... I'm taking notes"* (`CALL_DISCLOSE=off`
+  shortens the greeting, but it always answers honestly if asked), never imitates your voice, never agrees to money or
+  commitments, never gives out passwords/codes/card or ID details, hands anything unexpected back to you, and stops after
+  `CALL_MAX_MINUTES` (10). Note that the other person's audio is processed by Gemini and kept as a text transcript in memory.
+- **How the audio works**: two virtual devices (PipeWire). The call tab's microphone is Jarvis' voice, the call tab's sound
+  goes to Jarvis, and both are looped to your speakers. Only audio Chrome opens *after* the call starts is touched (your music
+  or another meeting is left alone); everything is put back and removed when the call ends. First call: Chrome asks to allow
+  the microphone for web.whatsapp.com / meet.google.com: click Allow once.
+- Answer an incoming WhatsApp call for you: *"answer the call and tell them I'll call back in an hour"*.
+- Caveat: WhatsApp Web's call screen changes often; the controls are matched by their labels and tested on mock pages, so the first
+  real call may need a small selector fix (`./run.sh --doctor`, and the buttons it can see are shown in the log).
+
 ## Qwen: fast voice model + big coding model
 
 The voice brain runs **`qwen3:8b`**, which fits entirely on the 8 GB GPU: about 40 tokens/s, a tool call in under a

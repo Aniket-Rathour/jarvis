@@ -62,6 +62,8 @@ class Assistant:
         self.day = DayMemory()        # today's plan and what is done/left, until the night log
         self.routines = Routines(self)
         self.tools = Toolbox(self)
+        from call_agent import CallManager
+        self.calls = CallManager(self)
         self.connected = False
         # audio / visual state
         self.muted = False
@@ -262,7 +264,7 @@ class Assistant:
         obey himself; otherwise a noise gate only lets real speech through."""
         now = time.monotonic()
         echo = self.half_duplex and self.speaker is not None and (
-            self.speaker.playing or now - self.speaker.last_sound < self.echo_tail)
+            self.speaker.playing or now - self.speaker.last_sound < self.echo_tail or self.calls.audible())
         if not echo:      # noise floor: falls fast, rises slowly, so speech doesn't drag it up
             f = self.noise_floor
             self.mic_chunks += 1

@@ -16,7 +16,8 @@ CASES = {
     "remember that my favourite editor is Neovim": "M_REMEMBER", "forget about the neovim thing": "M_FORGET",
     "add buy milk to my to-do list for tomorrow": "T_ADD", "put call Rahul on my todo list": "T_ADD",
     "what's on my to-do list": "T_LIST", "what are my tasks for today": "T_LIST", "mark buy milk as done": "T_DONE",
-    "tick off buy milk": "T_DONE",
+    "tick off buy milk": "T_DONE", "hang up": "C_END", "end the call": "C_END", "I'll take over": "C_TAKE",
+    "let me talk": "C_TAKE", "carry on": "C_BACK", "you take over": "C_BACK",
 }
 bad = []
 for text, want in CASES.items():
