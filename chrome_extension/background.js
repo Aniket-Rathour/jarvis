@@ -120,8 +120,16 @@ chrome.tabs.onCreated.addListener((t) => { lastOpened = { id: t.id, opener: t.op
 // ---------------------------------------------------------------- helpers
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function callTabs() {
-  return (await chrome.tabs.query({})).filter((t) => /^https:\/\/(web\.whatsapp\.com|meet\.google\.com)\//.test(t.url || ""));
+async function callTabs(m = {}) {
+  // Only the tabs of THIS call: another meeting that is open must never be mistaken for it (or ended by it).
+  let tabs = (await chrome.tabs.query({})).filter((t) => /^https:\/\/(web\.whatsapp\.com|meet\.google\.com)\//.test(t.url || ""));
+  if (m.tab != null && m.tab !== "") tabs = tabs.filter((t) => t.id === Number(m.tab));
+  if (m.platform === "whatsapp") tabs = tabs.filter((t) => hostOf(t.url) === "web.whatsapp.com");
+  if (m.platform === "meet") {
+    tabs = tabs.filter((t) => hostOf(t.url) === "meet.google.com");
+    if (m.code) tabs = tabs.filter((t) => (t.url || "").toLowerCase().includes(String(m.code).toLowerCase()));
+  }
+  return tabs;
 }
 
 async function activeTab() {
@@ -559,7 +567,7 @@ async function run(m) {
     case "call_state": {   // looks at every WhatsApp / Meet tab and reports the most advanced call state
       const rank = { none: 0, ended: 1, prejoin: 2, joinable: 3, incoming: 3, ringing: 4, connecting: 4, in_call: 5 };
       let best = null;
-      for (const t of await callTabs()) {
+      for (const t of await callTabs(m)) {
         try { const r = await inPage(t, "callState"); if (r && r.phase && (!best || rank[r.phase] > rank[best.phase])) best = { ...r, tab: t.id }; } catch { /* not injectable */ }
       }
       return best ? `phase: ${best.phase}; mic: ${best.mic}; platform: ${best.platform}; tab: ${best.tab}${best.code ? "; code: " + best.code : ""}; timer: ${best.timer ?? -1}${best.ui ? "; ui: " + best.ui.replace(/[;]/g, ",") : ""}${best.buttons ? "; buttons: " + best.buttons : ""}` : "phase: none";
@@ -567,6 +575,7 @@ async function run(m) {
     case "call_start": {
       const t = (await chrome.tabs.query({ url: "https://web.whatsapp.com/*" }))[0];
       if (!t) throw new Error("WhatsApp Web isn't open");
+      if (!t.active) await focusTab(t);                  // a background tab runs its timers slowly; and he can watch it dial
       const r = await inPage(t, "callStart");
       if (!r || !r.ok) throw new Error(r && r.err || "couldn't start the call");
       return "call started";
@@ -574,7 +583,7 @@ async function run(m) {
     case "call_answer": case "call_end": case "call_mic": {
       const fn = { call_answer: "callAnswer", call_end: "callEnd", call_mic: "callMic" }[m.cmd];
       let done = "", err = "";
-      for (const t of await callTabs()) {
+      for (const t of await callTabs(m)) {
         try { const r = await inPage(t, fn, m.cmd === "call_mic" ? [m.on !== false] : []); if (r && r.ok) { done = r.mic ? `mic ${r.mic}` : m.cmd.replace("call_", "") + " done"; break; } err = r && r.err || err; } catch { /* skip */ }
       }
       if (!done) throw new Error(err || "no call page found");
@@ -582,7 +591,7 @@ async function run(m) {
     }
     case "call_isolate": {  // before taking over a call that is already running: silence other tabs so only the call's sound is captured
       const rank = {};
-      const all = await callTabs();
+      const all = await callTabs(m);
       let callTab = null;
       for (const t of all) { try { const r = await inPage(t, "callState"); if (r && r.phase === "in_call") callTab = t; } catch { /* skip */ } }
       if (!callTab) throw new Error("no call in progress in any WhatsApp or Meet tab");
@@ -606,6 +615,7 @@ async function run(m) {
     case "wa_join_call": {   // join the group call that is running in the open chat
       const t = (await chrome.tabs.query({ url: "https://web.whatsapp.com/*" }))[0];
       if (!t) throw new Error("WhatsApp Web isn't open");
+      if (!t.active) await focusTab(t);
       const r = await inPage(t, "waJoinCall");
       if (!r || !r.ok) throw new Error(r && r.err || "couldn't join the call");
       return "joining the call";

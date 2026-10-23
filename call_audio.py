@@ -109,6 +109,7 @@ class CallAudio:
                 continue                       # was already playing before the call began: not part of the call
             if self.match(si) and sinks.get(si.get("sink")) != FROM_CALL:
                 self.moved_in.setdefault(si["index"], sinks.get(si.get("sink"), "@DEFAULT_SINK@"))
+                log.info("call audio: Chrome playback stream %s (%s) -> Jarvis' ear", si["index"], (si.get("properties") or {}).get("media.name", "?"))
                 _pactl("move-sink-input", str(si["index"]), FROM_CALL)
                 n_in += 1
         target = None if self.owner_mic else MIC
@@ -120,6 +121,7 @@ class CallAudio:
                 continue                       # a stream listening to some speaker's output, not a microphone stream
             if target and cur != target:
                 self.moved_out.setdefault(so["index"], cur or "@DEFAULT_SOURCE@")
+                log.info("call audio: Chrome microphone stream %s (%s) -> Jarvis' voice", so["index"], (so.get("properties") or {}).get("media.name", "?"))
                 _pactl("move-source-output", str(so["index"]), target)
                 n_out += 1
             elif not target and cur == MIC:    # hand the real microphone back to the call

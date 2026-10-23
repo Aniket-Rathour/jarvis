@@ -8,7 +8,7 @@ footer [contenteditable]{flex:1;border:1px solid #aaa;min-height:24px;padding:4p
 <footer><div contenteditable=true role=textbox aria-label="Type a message" data-tab=10 id=mb></div><button aria-label="Send" id=send style="display:none">Send</button></footer></div>
 <div id=callui style="display:none;position:fixed;bottom:10px;right:10px;border:1px solid #333;padding:8px;background:#eee"><span id=cs>Calling…</span> <button aria-label="Mute" id=mutec>Mute</button> <button aria-label="End call" id=endc>End call</button></div>
 <script>
-vc.onclick=()=>{callui.style.display='block';cs.textContent='Calling…';setTimeout(()=>cs.textContent='00:02',1500)};
+vc.onclick=()=>{callui.style.display='block';cs.textContent='Calling…';setTimeout(()=>cs.textContent='00:02',2800)};
 jc.onclick=()=>{callui.style.display='block';cs.textContent='Connecting…';setTimeout(()=>cs.textContent='00:03',1200)};
 endc.onclick=()=>{callui.style.display='none'};
 mutec.onclick=()=>{mutec.setAttribute('aria-label',mutec.getAttribute('aria-label')==='Mute'?'Unmute':'Mute')};

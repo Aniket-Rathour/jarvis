@@ -84,8 +84,12 @@ Gemini Live session just for the call), keeping to the mission you gave it.
   can't mistake the caller for you; headphones are better.
 - **Take over any time**: *"I'll talk"* (Jarvis goes silent and your real microphone goes into the call), *"carry on"* (Jarvis
   resumes), *"hang up"*.
+- **Every call command is scoped to its own tab**: a Meet you have open can't be mistaken for the WhatsApp call you just
+  placed (that bug made Jarvis think a ringing call had connected), and "end call" only ever hangs up the call it started.
+  While it works, the log shows what it sees: `call state: ...`, which Chrome streams were routed to it, and the loudest sound
+  it has heard from the call (`call audio: ...`). If nothing is audible after 14 s it tells you instead of staying silent.
 - **It starts only when the call truly connects** (the call timer is running; ringing and the ring tone never count), waits a
-  moment for the person to say hello, then opens with *"Hello <name>, this is Jarvis."* and gets to the point, and hangs up as
+  moment for the person to say hello, then (if nobody speaks for 15 s it says just *"Hello?"*, and gives up after 25 s) opens with *"Hello <name>, this is Jarvis."* and gets to the point, and hangs up as
   soon as it is done. It doesn't say "AI assistant" or whose assistant it is unless asked (`CALL_DISCLOSE=on` adds
   *"<you>'s AI assistant"* to the greeting), but it always answers honestly if asked who or what it is, never imitates your voice, never agrees to money or
   commitments, never gives out passwords/codes/card or ID details, hands anything unexpected back to you, and stops after
