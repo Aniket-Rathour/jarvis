@@ -104,6 +104,9 @@ ECHO_GUARD = _env("ECHO_GUARD", "auto")     # auto | on | off  (on = mic muted w
 # on = only send audio to Gemini while you're speaking above the room's noise level (stops it reacting to noise)
 NOISE_GATE = _env("NOISE_GATE", "on").lower() != "off"
 VAD_SILENCE_MS = int(_env("VAD_SILENCE_MS", "700"))
+# on = Jarvis decides when you have finished speaking (a pause mid-thought is not the end; see turn_taking.py);
+# off = Gemini's fixed VAD_SILENCE_MS rule
+SMART_TURNS = _env("SMART_TURNS", "on").lower() != "off"
 
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "jarvis"
 RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")

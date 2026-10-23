@@ -40,6 +40,16 @@ Launching again while it runs just brings the window back; it never runs twice.
 - **Claude terminals** show readable progress, close themselves 5 s after finishing (failures stay open),
   and Jarvis notices if you close one early. Each run is kept in `tasks/<id>/` for a week.
 
+## Natural turn-taking (talking to Jarvis, and on calls)
+
+Jarvis decides when you have finished speaking instead of answering after a fixed half-second of silence (`SMART_TURNS=on`,
+`turn_taking.py`). When you pause, a small local Whisper model reads how your words end:
+- a question, a short reply ("yes", "okay") or a complete command ("open YouTube") -> answered after ~0.5-0.9 s;
+- an ordinary sentence -> ~1 s;
+- mid-thought ("send Mom a message saying...", "so I was thinking", "um", "tell him") -> it waits up to 3 s.
+Talking over Jarvis pauses his voice at once; "mm-hm"/"okay"/"haan" lets him carry on, while "stop", "wait", "no", "sorry"
+or a real sentence stops him and he listens. `SMART_TURNS=off` goes back to Gemini's own fixed rule (`VAD_SILENCE_MS`).
+
 ## Two brains: Gemini and Qwen
 
 | | Gemini (cloud) | Qwen (this PC) |
