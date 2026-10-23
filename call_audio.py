@@ -162,8 +162,13 @@ class Mouth:
         self._buf = bytearray()
         self._lock = threading.Lock()
         self.last_sound = 0.0
+        self.held = False                        # paused mid-sentence (someone started talking over Jarvis)
         self._run = True
         threading.Thread(target=self._pump, daemon=True).start()
+
+    def hold(self, on: bool):
+        """Pause (keep what is left to say) or carry on from the same point."""
+        self.held = on
 
     def write(self, pcm: bytes):
         with self._lock:
@@ -181,8 +186,11 @@ class Mouth:
         chunk, period = OUT_RATE * 2 * 20 // 1000, 0.02          # 20 ms
         nxt = time.monotonic()
         while self._run:
-            with self._lock:
-                data = bytes(self._buf[:chunk]); del self._buf[:chunk]
+            if self.held:
+                data = b""
+            else:
+                with self._lock:
+                    data = bytes(self._buf[:chunk]); del self._buf[:chunk]
             if not data:
                 data = b"\0" * chunk                              # keep the stream open with silence
             else:
