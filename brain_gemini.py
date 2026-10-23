@@ -21,9 +21,16 @@ NUDGE = ("[System note] You told the user you would act but did not call any too
          "Call the correct tool now (delegate_to_claude if unsure). Do not apologise at length.")
 
 
+# Polite closings and promises about the future that need no tool now ("let me know", "I'll keep that in mind")
+NOT_A_PROMISE = re.compile(r"\b(let me know|i'?ll (keep|bear) (that|it) in mind|i'?ll remember|i will remember|from now on|"
+                           r"future|next time|whenever you|if you (need|want|require))\b", re.I)
+
+
 def promised_but_idle(said: str) -> bool:
     said = said.strip()
-    return bool(said) and not said.endswith("?") and bool(PROMISE.search(said))
+    if not said or said.endswith("?") or NOT_A_PROMISE.search(said):
+        return False
+    return bool(PROMISE.search(said))
 
 
 class Reconnect(Exception):

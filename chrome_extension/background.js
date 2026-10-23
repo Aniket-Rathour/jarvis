@@ -5,7 +5,7 @@
 //    last resort when a page ignores them, and is released at once
 //  - looks inside iframes and shadow DOM, notices new tabs a click opens, waits for slow pages
 const WS_URL = "ws://127.0.0.1:8765";
-const LIB_V = 10;
+const LIB_V = 11;
 let ws = null, connected = false;
 
 // ---------------------------------------------------------------- connection
@@ -88,14 +88,14 @@ const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); 
 const appOf = (u) => { try { const h = new URL(u).hostname; return APPS[h] || APPS["www." + h] || h.replace(/^www\./, ""); } catch { return ""; } };
 
 const APPS_KNOWN = new Set(Object.values(APPS));
-let pushTimer, lastPushed = "";
+let pushTimer, lastPushed = "", chromeFocused = true;
 function pushState(delay = 120) {
   clearTimeout(pushTimer);
   pushTimer = setTimeout(async () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     try {
       const t = await activeTab();
-      const st = { id: t.id, title: t.title || "", url: t.url || "", app: appOf(t.url || "") };
+      const st = { id: t.id, title: t.title || "", url: t.url || "", app: appOf(t.url || ""), focused: chromeFocused };
       if (hostOf(t.url) === "web.whatsapp.com") { try { const w = await inPage(t, "waState"); if (w && w.chat) st.chat = w.chat; } catch { /* loading */ } }
       const key = JSON.stringify(st);
       if (key === lastPushed) return;
@@ -106,7 +106,7 @@ function pushState(delay = 120) {
 }
 chrome.tabs.onActivated.addListener(() => pushState());
 chrome.tabs.onUpdated.addListener((_id, ch, tab) => { if (tab.active && (ch.status === "complete" || ch.url || ch.title)) pushState(); });
-chrome.windows.onFocusChanged.addListener(() => pushState());
+chrome.windows.onFocusChanged.addListener((wid) => { chromeFocused = wid !== chrome.windows.WINDOW_ID_NONE; pushState(); });
 // chats switched by hand inside WhatsApp change nothing Chrome can see: look every 3 s while WhatsApp is in front
 setInterval(async () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -185,10 +185,11 @@ const FRAMED = new Set(["click", "hover", "drag", "check", "type", "clear", "has
 
 async function execIn(tabId, frameId, name, args) {
   const target = frameId ? { tabId, frameIds: [frameId] } : { tabId };
+  args = args.map((a) => (a === undefined ? null : a));          // Chrome refuses 'undefined' as a script argument
   const call = () => chrome.scripting.executeScript({
     target, args: [name, args, frameId || 0],
     func: async (n, a, fid) => {
-      if (!(window.__jv && window.__jv.v === 10)) return "__NOLIB__";
+      if (!(window.__jv && window.__jv.v === 11)) return "__NOLIB__";
       window.__jv.fid = fid;
       return await window.__jv[n](...a);
     },
@@ -519,7 +520,7 @@ async function run(m) {
     }
     case "scroll": {
       const t = await pickTab(m);
-      return await inPage(t, "scroll", [m.direction || "down", m.amount, m.text ? { text: m.text } : null]);
+      return await inPage(t, "scroll", [m.direction || "down", m.amount ?? null, m.text ? { text: m.text } : null]);
     }
     case "wait_for": {
       const t = await pickTab(m);

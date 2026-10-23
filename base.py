@@ -371,14 +371,39 @@ class Assistant:
             time.sleep(0.2)
         return screen.capture()
 
+    async def _chrome_shot(self):
+        """A picture of the Chrome tab in front, through the extension (no desktop permission prompt). None if unavailable."""
+        from browser_bridge import bridge
+        if not bridge.connected:
+            return None
+        out = await bridge.call("screenshot", timeout=15)
+        if not out.startswith("data:image"):
+            return None
+        import base64
+        import io
+        from PIL import Image
+        return Image.open(io.BytesIO(base64.b64decode(out.split(",", 1)[1]))).convert("RGB")
+
     async def look_at_screen(self, question: str) -> str:
         if not self.client:
             return "error: screen understanding needs the Gemini engine"
+        from browser_bridge import bridge
         try:
+            if bridge.active.get("focused") and (img := await self._chrome_shot()) is not None:
+                return await screen.describe(self.client, question, img)     # Chrome is in front: its tab is the screen
             img = await asyncio.to_thread(self._capture_clean)
             return await screen.describe(self.client, question, img)
         except Exception as e:
-            return f"error: couldn't look at the screen ({str(e)[:150]})"
+            err = str(e)[:150]
+            img = await self._chrome_shot() if "denied" in err or "cancel" in err else None
+            if img is not None:
+                text = await screen.describe(self.client, question, img)
+                return ("(The desktop screenshot permission is off, so this is only the Chrome tab in front.) " + text +
+                        " [Tell sir once: to let me see the whole screen, allow screenshots for this app in GNOME Settings > Apps.]")
+            if "denied" in err or "cancel" in err:
+                return ("error: the desktop refused the screenshot (permission off or the prompt was cancelled). Tell sir: allow "
+                        "screenshots for this app in GNOME Settings > Apps, or put Chrome in front and I can see the tab.")
+            return f"error: couldn't look at the screen ({err})"
 
     async def point_at(self, target: str, hold: float = 8.0) -> str:
         if not self.client:

@@ -328,6 +328,10 @@ def ollama_tools() -> list[dict]:
 JOB_TOOLS = {"delegate_to_claude", "delegate_to_opencode", "install_packages", "install_gnome_extension"}
 ACTION_TOOLS = JOB_TOOLS | {"browser", "open_bookmark", "open_url", "web_search", "open_path", "open_app", "window", "run_command",
                             "write_file", "volume", "media", "clipboard"}
+# Browser actions that only look, or that are naturally repeated (scrolling, pressing a key): the page changes in between,
+# so doing them again is progress, not a loop.
+BROWSER_REPEATABLE = {"read", "text", "links", "tabs", "context", "selected", "find", "scroll", "wait_for", "key", "back",
+                      "forward", "media", "switch"}
 NO_DEDUPE = {"call", "show_plan", "update_step", "record_approval", "job_status", "find_bookmarks", "search_files",
              "cancel_job", "window", "browser", "remember", "recall", "todo", "recall_research", "forget", "read_file", "list_dir", "volume", "media", "look_at_screen", "point_at",
              "clear_pointer", "day_status", "day_update"}
@@ -603,11 +607,12 @@ class Toolbox:
         """Returns a result string, or a Job for background tools."""
         key = name + json.dumps(a, sort_keys=True, default=str)
         now = time.time()
-        if name not in ("update_step", "job_status", "record_approval", "call"):     # call: retry after a failure must work
+        observe = name == "browser" and a.get("action") in BROWSER_REPEATABLE
+        if name not in ("update_step", "job_status", "record_approval", "call") and not observe:   # call: retry after a failure must work
             ukey = f"{self.utterance}:{key}"
             self.calls[ukey] = n = self.calls.get(ukey, 0) + 1
             if n >= 3 or (n == 2 and name not in ("read_file", "list_dir", "search_files", "find_bookmarks",
-                                                   "look_at_screen", "point_at")):
+                                                   "look_at_screen", "point_at", "browser")):
                 return (f"LOOP: you already called {name} with exactly these arguments {n - 1} time(s) for this "
                         "request. Stop repeating it; use the earlier result, or tell sir what is blocking you.")
         if name not in NO_DEDUPE and key in self.recent and now - self.recent[key][0] < DEDUPE_SECONDS:
@@ -661,7 +666,14 @@ class Toolbox:
         if name == "open_path":
             return await t(desktop.open_target, a["path"])
         if name == "open_app":
-            return await t(desktop.open_app, a["name"])
+            out = await t(desktop.open_app, a["name"])
+            if out.startswith("no app found"):                  # "open WhatsApp / Notion / Claude": the web app, in a tab he already has if any
+                from browser_bridge import bridge
+                if bridge.connected:
+                    r = await bridge.call("open", timeout=30, url=a["name"])
+                    if not r.startswith("error"):
+                        return r
+            return out
         if name == "window":
             return await t(desktop.window, **{k: a[k] for k in ("action", "app", "width", "height", "x", "y") if k in a})
         if name == "run_command":
