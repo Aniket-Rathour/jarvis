@@ -115,6 +115,11 @@ async def amain(args):
             if dev:
                 dev.close()
         URL_FILE.unlink(missing_ok=True)
+        try:                                           # leave nothing of Qwen running in the background
+            import ollama_ctl
+            await asyncio.to_thread(ollama_ctl.release)
+        except Exception:
+            pass
 
 
 def mic_test():
@@ -143,6 +148,7 @@ def main():
     p.add_argument("--no-window", action="store_true", help="don't open the window; print its URL instead")
     p.add_argument("--devices", action="store_true", help="list audio devices for MIC_DEVICE / SPEAKER_DEVICE")
     p.add_argument("--mic-test", action="store_true", help="record 7 s and show a live microphone level meter")
+    p.add_argument("--doctor", action="store_true", help="check everything (keys, audio, Chrome, Qwen, memory) and say how to fix it")
     p.add_argument("--list-models", action="store_true", help="list the models each brain can use")
     args = p.parse_args()
 
@@ -154,6 +160,9 @@ def main():
         return
     if args.mic_test:
         return mic_test()
+    if args.doctor:
+        import doctor
+        return doctor.run()
     if args.list_models:
         if config.GEMINI_API_KEY:
             from google import genai

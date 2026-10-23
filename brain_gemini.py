@@ -120,6 +120,12 @@ class GeminiBrain:
         else:
             self.a.pending_notes.append(note)
 
+    async def context(self, note: str):
+        """Add a fact to the conversation WITHOUT asking for a reply (what is on his screen)."""
+        if self.session:
+            await self.session.send_client_content(
+                turns=types.Content(role="user", parts=[types.Part(text=note)]), turn_complete=False)
+
     async def deliver_job(self, job: Job):
         if self.session and job.fc_id and job.session_gen == self.gen:
             try:

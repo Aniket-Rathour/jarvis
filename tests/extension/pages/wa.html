@@ -1,0 +1,20 @@
+<!doctype html><title>(2) WhatsApp</title><meta charset=utf-8>
+<style>body{margin:0;display:flex;height:100vh;font:14px sans-serif}#side{width:320px;border-right:1px solid #ccc;display:flex;flex-direction:column}#pane-side{overflow:auto;flex:1}
+[role=listitem]{padding:12px;border-bottom:1px solid #eee;cursor:pointer}#main{flex:1;display:flex;flex-direction:column}#msgs{flex:1;overflow:auto;padding:10px}footer{display:flex;padding:8px;border-top:1px solid #ccc}
+footer [contenteditable]{flex:1;border:1px solid #aaa;min-height:24px;padding:4px}</style>
+<div id=side><div style="padding:8px"><div contenteditable=true role=textbox aria-label="Search or start a new chat" data-tab=3 id=sb style="border:1px solid #aaa;padding:4px;min-height:22px"></div></div>
+<div id=pane-side></div></div>
+<div id=main><header style="padding:10px;border-bottom:1px solid #ccc"><span id=ht title=""></span></header><div id=msgs></div>
+<footer><div contenteditable=true role=textbox aria-label="Type a message" data-tab=10 id=mb></div><button aria-label="Send" id=send style="display:none">Send</button></footer></div>
+<script>
+const names=["Aryan Dce Cse-1","Mom","Rahul Sharma","Aryan Kumar","Priya"];
+const pane=document.getElementById('pane-side');
+function render(q){pane.innerHTML='';names.filter(n=>!q||n.toLowerCase().includes(q.toLowerCase())).forEach(n=>{const d=document.createElement('div');d.setAttribute('role','listitem');d.innerHTML='<span title="'+n+'">'+n+'</span><div style="color:#888">last message...</div>';d.addEventListener('click',()=>{document.getElementById('ht').textContent=n;document.getElementById('ht').title=n;window.__open=n});pane.appendChild(d)})}
+render('');
+document.getElementById('sb').addEventListener('input',e=>render(e.target.innerText.trim()));
+const mb=document.getElementById('mb'),send=document.getElementById('send');
+mb.addEventListener('input',()=>send.style.display=mb.innerText.trim()?'':'none');
+function doSend(){const t=mb.innerText.trim();if(!t||!window.__open)return;const m=document.createElement('div');m.className='m';m.textContent=window.__open+' <- '+t;document.getElementById('msgs').appendChild(m);mb.innerHTML='';send.style.display='none'}
+send.addEventListener('click',doSend);
+mb.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();doSend()}});
+</script>
