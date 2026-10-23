@@ -24,6 +24,9 @@ from harness import Harness  # noqa: E402
 from google import genai  # noqa: E402
 
 
+VARIANT = sys.argv[1] if len(sys.argv) > 1 else "attach"
+
+
 def stream_sink(client):
     sinks = {s["index"]: s["name"] for s in ca._json("list", "sinks")}
     for si in ca._json("list", "sink-inputs"):
@@ -45,6 +48,7 @@ async def main() -> int:
         told.append(n)
     assistant.notify = notify
     # the call's streams exist BEFORE Jarvis arrives: the call's playback (stays running) and the call's microphone capture
+    print(f"variant: {VARIANT}")
     play = subprocess.Popen(["pacat", "--client-name=JarvisTestChrome", "--stream-name=callplay", "--rate=24000", "--format=s16le",
                              "--channels=1", "--device=jarvis_test_out"], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     rec = subprocess.Popen(["parec", "--client-name=JarvisTestChrome", "--rate=24000", "--format=s16le", "--channels=1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -72,8 +76,12 @@ async def main() -> int:
         print("joined first, by hand:", await bridge.call("meet_join", url="abc-defg-hij", owner="Aniket"))
         print("state:", (await bridge.call("call_state"))[:60])
         mgr = call_agent.CallManager(assistant)
-        print("attach ->", await mgr.start("auto", "", "You are taking over this meeting. Ask the group what they think of the presentation, "
-                                           "note every change they suggest, then thank them.", mode="attach"))
+        mission = ("You are taking over this meeting. Ask the group what they think of the presentation, "
+                   "note every change they suggest, then thank them.")
+        if VARIANT == "start":      # he joined by hand, THEN asked Jarvis to start the call with the link (the real failure case)
+            print("start with the link ->", await mgr.start("meet", "", mission, url="https://meet.google.com/abc-defg-hij"))
+        else:
+            print("attach ->", await mgr.start("auto", "", mission, mode="attach"))
         for _ in range(60):
             if mgr.agent and mgr.agent.session:
                 break

@@ -137,6 +137,8 @@ class CallAgent:
                 if not spoke and not self.ended.is_set():
                     self.end("Nobody said anything after the call connected, so I hung up.")
                 elif not self.ended.is_set():
+                    if self._meeting and not self._remote_spoke():
+                        await session.send_realtime_input(text="[You are in the meeting. Give your opening now.]")
                     for _ in range(25):                           # the model normally answers their hello by itself
                         if self._jarvis_spoke() or self.ended.is_set():
                             break
@@ -160,6 +162,10 @@ class CallAgent:
     def _jarvis_spoke(self) -> bool:
         return bool(self._buf["jarvis"].strip()) or any(w == "jarvis" for w, _ in self.transcript) or bool(self.mouth and self.mouth.speaking)
 
+    @property
+    def _meeting(self) -> bool:
+        return self.attached or self.platform == "meet"
+
     async def _await_pickup(self) -> bool:
         """The page says the call is connected. Now WAIT for the other person to say something (their "hello"): ring tones and
         chimes make no words, so they don't count. After 15 s of silence say a bare 'Hello?' once; after 25 s give up.
@@ -171,6 +177,8 @@ class CallAgent:
             if self._remote_spoke():
                 await asyncio.sleep(0.8)                          # let their greeting finish
                 return True
+            if self._meeting and waited > 6:
+                return True                                            # a meeting may be quiet: just begin
             if waited > 15 and not said_hello and self.session:
                 said_hello = True
                 log.info("call: nobody has spoken for 15 s; saying a bare 'Hello?'")
@@ -471,7 +479,7 @@ class CallManager:
                 iso = await bridge.call("call_isolate", timeout=15, **self.scope)
                 isolated = not iso.startswith("error")
                 await bridge.call("call_mic", timeout=10, on=True, **self.scope)          # his own mute would also silence Jarvis
-                await asyncio.to_thread(self.audio.route_once)
+                await asyncio.to_thread(self.audio.adopt_all)
             elif incoming:
                 r = await bridge.call("call_answer", timeout=15, **self.scope)
             elif mode == "join":
@@ -508,7 +516,11 @@ class CallManager:
                                           f"The call never connected (last state: {phase or 'unknown'}).")
                 return
             self.state = "in call"
-            if platform == "whatsapp" or attach:
+            if platform == "meet" and not attach:                       # he may have joined before Jarvis came: take over its audio too
+                iso = await bridge.call("call_isolate", timeout=15, **self.scope)
+                isolated = isolated or not iso.startswith("error")
+                await asyncio.to_thread(self.audio.adopt_all)
+            if platform == "whatsapp" or attach or platform == "meet":
                 await bridge.call("call_mic", timeout=10, on=True, **self.scope)      # an unmuted call, or nobody hears Jarvis
             self.agent = CallAgent(a, mission, who, platform, self.audio, attached=attach, scope=self.scope)
             await a.notify(f"[Call connected with {who or platform}. I'm handling it; tell {config.USER_NAME} briefly that the call has started.]")

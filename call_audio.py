@@ -71,8 +71,7 @@ class CallAudio:
                 if out.isdigit():
                     self.modules.append(out)
         if attach:
-            self.baseline_in = {si["index"] for si in _json("list", "sink-inputs") if self.match(si) and si.get("corked")}
-            self.baseline_out = {so["index"] for so in _json("list", "source-outputs") if self.match(so) and so.get("corked")}
+            self.baseline_in, self.baseline_out = set(), set()      # the call is already running: every browser stream may be the call's
         else:
             self.baseline_in = {si["index"] for si in _json("list", "sink-inputs") if self.match(si)}
             self.baseline_out = {so["index"] for so in _json("list", "source-outputs") if self.match(so)}
@@ -144,6 +143,20 @@ class CallAudio:
             _pactl("move-source-output", str(idx), src)
         self.moved_in.clear()
         self.moved_out.clear()
+
+    def adopt_all(self):
+        """The call is confirmed live and its audio streams may already exist (he joined the meeting before Jarvis arrived, and
+        Chrome may have paused an idle stream): take over EVERY browser stream, not just the ones opened from now on. Used after
+        the extension has muted his other sounding tabs."""
+        self.baseline_in, self.baseline_out = set(), set()
+        names = {s["index"]: s["name"] for s in _json("list", "sinks")}
+        for si in _json("list", "sink-inputs"):
+            if self.match(si):
+                log.info("call audio: browser playback stream %s (%s, %s) on %s", si["index"], (si.get("properties") or {}).get("media.name", "?"),
+                         "paused" if si.get("corked") else "running", names.get(si.get("sink"), "?"))
+        n_in, n_out = self.route_once()
+        log.info("call audio: took over %d playback and %d microphone stream(s)", n_in, n_out)
+        return n_in, n_out
 
     def hand_mic_to_owner(self, on: bool):
         """True: the call hears his real microphone (he talks himself); False: it hears Jarvis."""

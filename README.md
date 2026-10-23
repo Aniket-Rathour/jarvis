@@ -103,6 +103,9 @@ Gemini Live session just for the call), keeping to the mission you gave it.
   <you>'s AI assistant. <you> asked me to take over..."). **"Join the meeting link in the group"** finds the Meet link in the open
   chat; if that meeting is already open in a tab it reuses it instead of opening a second copy. **A group call running in a WhatsApp
   chat** ("Ongoing call"): Jarvis presses Join and takes part. Ask "is there a call going on?" any time.
+- **Meet you had already joined**: if you joined the meeting yourself before asking Jarvis to start/take over, Chrome's audio for
+  that meeting already exists, so once the call is confirmed live Jarvis takes over *all* of Chrome's audio streams (your other
+  sounding tabs are muted first and restored afterwards). In a meeting it also no longer hangs up when nobody speaks for a while.
 - **Out-of-date extension**: Chrome only picks up extension changes when you press Reload on `chrome://extensions`. Jarvis now compares
   versions when the extension connects, tells you in the window, and every call error says so plainly (the old behaviour was a silent
   failure). `./run.sh --doctor` shows it too.
